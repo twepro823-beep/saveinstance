@@ -12,13 +12,6 @@ local SaveinstanceOptions = {  }
 synsaveinstance(SaveinstanceOptions);
 ```
 
-# Union investigator
-
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/union_investigator.luau", true), "union_investigator")()
-```
-
-
 # manual version
 
 ```lua

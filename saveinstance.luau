@@ -1202,6 +1202,7 @@ do
 		"PhysicalConfigData",
 		"PhysicsData",
 		"SerializedOperationGraph",
+		"AssetId",
 	})
 
 	CriticalUnionProperties = ArrayToDict({
@@ -1211,6 +1212,7 @@ do
 		"MeshData2",
 		"PhysicsData",
 		"SerializedOperationGraph",
+		"AssetId",
 	})
 
 	local NotScriptableFixes = { --[[
@@ -2563,6 +2565,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return value == "" and isCriticalTriangleMeshProperty(instance, propertyName)
 	end
 
+	local function shouldRetryEmptyGeometryProperty(instance, propertyName, value)
+		return value == "" and isCriticalTriangleMeshProperty(instance, propertyName)
+	end
+
+	local function tryGeometryFallback(instance, propertyName, optional)
+		local ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
+		if ok and (result ~= nil or optional) then
+			return result
+		end
+	end
+
 	local function ReadProperty(instance, property, propertyName, special, category, optional)
 		local raw = __BREAK
 
@@ -2912,6 +2925,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 									recordTriangleMeshReadFailure(instance, PropertyName)
 									continue
 								end
+							end
+						end
+
+						if shouldRetryEmptyGeometryProperty(instance, PropertyName, raw) then
+							local fallbackValue = tryGeometryFallback(instance, PropertyName, Optional)
+							if fallbackValue ~= nil and fallbackValue ~= "" then
+								raw = fallbackValue
 							end
 						end
 
