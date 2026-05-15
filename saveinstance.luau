@@ -2559,6 +2559,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return false
 	end
 
+	local function shouldSkipEmptyGeometryProperty(instance, propertyName, value)
+		return value == "" and isCriticalTriangleMeshProperty(instance, propertyName)
+	end
+
 	local function ReadProperty(instance, property, propertyName, special, category, optional)
 		local raw = __BREAK
 
@@ -2909,6 +2913,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 									continue
 								end
 							end
+						end
+
+						if shouldSkipEmptyGeometryProperty(instance, PropertyName, raw) then
+							continue
 						end
 
 						if SharedStringOverwrite and ValueType == "BinaryString" then -- TODO: Convert this to table if more types are added
