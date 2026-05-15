@@ -8,7 +8,15 @@ join our own discord server if u want lol
 
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")();
-local SaveinstanceOptions = {  }
+local SaveinstanceOptions = {
+    TreatUnionsAsParts = false,
+    TreatUnreadableUnionsAsParts = false,
+    IgnoreSpecialProperties = false,
+    IgnoreSharedStrings = false,
+    ReadMe = false,
+    ScriptSourceHeader = false,
+    LinkedSourceComment = false,
+}
 synsaveinstance(SaveinstanceOptions);
 ```
 

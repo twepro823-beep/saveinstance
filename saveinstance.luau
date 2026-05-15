@@ -1741,7 +1741,9 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- * Note: Options are case-insensitive, meaning you could type `NilInstances` option as `nilInStaNces` and it would still be valid.
 --- @within SynSaveInstance
 --- @field __DEBUG_MODE boolean -- This will print debug logs to console about unusual scenarios. Recommended to enable if you wish to help us improve our products and find bugs / issues with it! ___Default:___ false
---- @field ReadMe boolean --___Default:___ true
+--- @field ReadMe boolean -- Adds a README Script to the saved file. ___Default:___ false
+--- @field ScriptSourceHeader boolean -- Adds saveinstance/source comments at the top of decompiled Script sources. ___Default:___ false
+--- @field LinkedSourceComment boolean -- Adds Original Source comments for LinkedSource scripts. ___Default:___ false
 --- @field SafeMode boolean -- Kicks you before Saving, which prevents you from being detected in any game. ___Default:___ false
 --- @field ShutdownWhenDone boolean -- Shuts the game down after saveinstance is finished. ___Default:___ false
 --- @field AntiIdle boolean -- Prevents the 20-minute-Idle Kick. ___Default:___ true
@@ -1773,6 +1775,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IsolateStarterPlayer boolean -- If enabled, StarterPlayer will be cleared and the saved starter player will be placed into folders. ___Default:___ false
 --- @field IsolateLocalPlayerCharacter boolean -- Saves Children of LocalPlayer.Character as separate folder and prevents any instance of ClassName Player with .Name identical to LocalPlayer.Name from saving. ___Default:___ false
 --- @field RemovePlayerCharacters boolean -- Ignore player characters while saving. (Enables SaveNotCreatable automatically). ___Default:___ true
+--- @field AutoArchivableCharacters boolean -- When player characters are saved, marks them Archivable automatically. ___Default:___ true
 --- @field SaveNotCreatable boolean -- * Includes non-serializable instances as Folder objects (Name is misleading as this is mostly a fix for certain NilInstances and isn't always related to NotCreatable). ___Default:___ false
 --- .NotCreatableFixes table<Instance.ClassName> -- * {"Player"} is the same as {Player = "Folder"}; Format like {SpawnLocation = "Part"} is only to be used when SpawnLocation inherits from "Part" AND "Part" is Creatable. ___Default:___ { "", "Player", "PlayerScripts", "PlayerGui", "TouchTransmitter" }
 --- @field IsolatePlayers boolean -- * This option does save players, it's just they won't show up in Studio and can only be viewed through the place file code (in text editor). More info at https://github.com/luau/UniversalSynSaveInstance/issues/2. ___Default:___ false
@@ -1830,8 +1833,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local currentstr, currentsize, totalsize, chunks = "", 0, 0, table.create(1)
 	local savebuffer, savebuffer_size = {}, 1
-	local header =
-		'<!-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw --><roblox version="4">'
+	local header = '<roblox version="4">'
 
 	local StatusText
 
@@ -1873,7 +1875,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		ShutdownWhenDone = false,
 		AntiIdle = true,
 		Anonymous = false,
-		ReadMe = true,
+		ReadMe = false,
+		ScriptSourceHeader = false,
+		LinkedSourceComment = false,
 		FilePath = false,
 		Object = false,
 		IsModel = false,
@@ -1888,6 +1892,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IsolatePlayers = false,
 		IsolateStarterPlayer = false,
 		RemovePlayerCharacters = true,
+		AutoArchivableCharacters = true,
 
 		SaveNotCreatable = false,
 		NotCreatableFixes = {
@@ -2110,6 +2115,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local IgnoreSharedStrings = OPTIONS.IgnoreSharedStrings
 	local SharedStringOverwrite = OPTIONS.SharedStringOverwrite
+	local ScriptSourceHeader = OPTIONS.ScriptSourceHeader
+	local LinkedSourceComment = OPTIONS.LinkedSourceComment
 
 	local ldeccache = GLOBAL_ENV.scriptcache
 
@@ -3080,9 +3087,18 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 											end
 										end
 
-										value = "-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw\n\n"
-											.. (hasLinkedSource and "-- Original Source: https://assetdelivery.roblox.com/v1/asset/?" .. (LinkedSource_type or "id") .. "=" .. (LinkedSource or LinkedSource_Url) .. "\n\n" or "")
-											.. value
+										if LinkedSourceComment and hasLinkedSource then
+											value = "-- Original Source: https://assetdelivery.roblox.com/v1/asset/?"
+												.. (LinkedSource_type or "id")
+												.. "="
+												.. (LinkedSource or LinkedSource_Url)
+												.. "\n\n"
+												.. value
+										end
+
+										if ScriptSourceHeader then
+											value = "-- Decompiled Source\n\n" .. value
+										end
 									end
 								end
 								value = XML_Descriptors.__PROTECTEDSTRING(value)
@@ -3245,7 +3261,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						RecoveredScripts
 						) .. "\n" or "")
 					.. [[
-		Thank you for using UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw.
+		This file was generated by saveinstance.
 
 		If you didn't save in Binary (rbxl) - it's recommended to save the game right away to take advantage of the binary format & to preserve values of certain properties if you used IgnoreDefaultProperties setting (as they might change in the future).
 		You can do that by going to FILE -> Save to File As -> Make sure File Name ends with .rbxl -> Save
@@ -3308,7 +3324,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 
 		savebuffer[savebuffer_size] =
-			"</roblox><!-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw -->"
+			"</roblox>"
 		savebuffer_size += 1
 		save_cache(true)
 		do
@@ -3458,6 +3474,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				end
 			end
 
+			local function makeCharacterArchivable(player)
+				local function makeArchivable(character)
+					if character then
+						character.Archivable = true
+					end
+				end
+
+				table.insert(Connections, player.CharacterAdded:Connect(makeArchivable))
+				makeArchivable(player.Character)
+			end
+
 			if OPTIONS.RemovePlayerCharacters then
 				table.insert(
 					Connections,
@@ -3470,6 +3497,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				end
 			else
 				IgnoreNotArchivable = false -- TODO Bad solution (Characters are NotArchivable); Also make sure the next solution is compatible with IsolateLocalPlayerCharacter
+				if OPTIONS.AutoArchivableCharacters then
+					table.insert(
+						Connections,
+						Players.PlayerAdded:Connect(function(player)
+							makeCharacterArchivable(player)
+						end)
+					)
+					for _, player in Players:GetPlayers() do
+						makeCharacterArchivable(player)
+					end
+				end
 				if IsolateLocalPlayerCharacter then
 					task.spawn(function()
 						ignoreCharacter(GetLocalPlayer())
