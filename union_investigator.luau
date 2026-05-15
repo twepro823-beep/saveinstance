@@ -27,6 +27,15 @@ local PROPERTIES = {
 	"TriangleCount",
 }
 
+local function hex_prefix(value, maxBytes)
+	local len = math.min(#value, maxBytes)
+	local out = table.create(len)
+	for i = 1, len do
+		out[i] = string.format("%02X", string.byte(value, i))
+	end
+	return table.concat(out, " ")
+end
+
 local function safe_call(fn, ...)
 	local ok, result = pcall(fn, ...)
 	if ok then
@@ -77,7 +86,6 @@ local function classify(value)
 	if type(value) == "string" then
 		local len = #value
 		local hasNull = string.find(value, "\0", 1, true) ~= nil
-		local printable = string.gsub(string.sub(value, 1, 80), "[%c]", ".")
 		local looksBase64 = len > 0 and string.match(value, "^[A-Za-z0-9+/=]+$") ~= nil
 
 		return {
@@ -86,7 +94,7 @@ local function classify(value)
 			empty = len == 0,
 			hasNull = hasNull,
 			looksBase64 = looksBase64,
-			prefix = printable,
+			hexPrefix = hex_prefix(value, 40),
 		}
 	end
 
@@ -227,7 +235,17 @@ for _, instance in game:GetDescendants() do
 	end
 end
 
-local report = HttpService:JSONEncode(stats)
+local okJson, report = pcall(HttpService.JSONEncode, HttpService, stats)
+if not okJson then
+	report = "JSONEncode failed: " .. tostring(report) .. "\n"
+		.. "scanned=" .. tostring(stats.total) .. "\n"
+		.. "executor=" .. tostring(stats.executor) .. "\n"
+		.. "version=" .. tostring(stats.version) .. "\n"
+		.. "hasGetHiddenProperty=" .. tostring(stats.hasGetHiddenProperty) .. "\n"
+		.. "classes=" .. HttpService:JSONEncode(stats.classes) .. "\n"
+		.. "properties=" .. HttpService:JSONEncode(stats.properties) .. "\n"
+		.. "badPaths=" .. HttpService:JSONEncode(stats.badPaths) .. "\n"
+end
 
 print("[union investigator] scanned", stats.total, "TriangleMeshPart instances")
 print("[union investigator] gethiddenproperty:", stats.hasGetHiddenProperty)
