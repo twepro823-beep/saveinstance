@@ -1170,6 +1170,7 @@ end
 local ClassList
 local RequiredSharedStringProperties
 local CriticalTriangleMeshProperties
+local CriticalUnionProperties
 
 do
 	local ClassPropertyExceptions = {
@@ -1199,6 +1200,15 @@ do
 		"MeshData",
 		"MeshData2",
 		"PhysicalConfigData",
+		"PhysicsData",
+		"SerializedOperationGraph",
+	})
+
+	CriticalUnionProperties = ArrayToDict({
+		"ChildData",
+		"ChildData2",
+		"MeshData",
+		"MeshData2",
 		"PhysicsData",
 		"SerializedOperationGraph",
 	})
@@ -1766,6 +1776,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
+--- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read into Parts. This avoids corrupted-looking unions but still loses the real union shape. ___Default:___ false
 
 --- @interface OptionsAliases
 --- @within SynSaveInstance
@@ -1897,6 +1908,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
 		TreatUnionsAsParts = false,
+		TreatUnreadableUnionsAsParts = false,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],
 
 		OptionsAliases = { -- You can't really modify these as a user
@@ -2081,6 +2093,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local SaveNotCreatable = OPTIONS.SaveNotCreatable
 	local TreatUnionsAsParts = OPTIONS.TreatUnionsAsParts
+	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
 
 	local DecompileJobless = OPTIONS.DecompileJobless
 	if DecompileJobless then
@@ -2504,11 +2517,46 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local IPM_DISABLED = not IPM_ENABLED
 	local __BREAK = "__BREAK" .. service.HttpService:GenerateGUID(false)
 	local TriangleMeshReadFailures = {}
+	local UnreadableUnionInstances = {}
 
 	local function recordTriangleMeshReadFailure(instance, propertyName)
 		if isCriticalTriangleMeshProperty(instance, propertyName) then
-			TriangleMeshReadFailures[propertyName] = (TriangleMeshReadFailures[propertyName] or 0) + 1
+			local className = instance.ClassName
+			local classFailures = TriangleMeshReadFailures[className]
+			if not classFailures then
+				classFailures = {}
+				TriangleMeshReadFailures[className] = classFailures
+			end
+			classFailures[propertyName] = (classFailures[propertyName] or 0) + 1
+
+			if CriticalUnionProperties[propertyName] and instance:IsA("PartOperation") then
+				UnreadableUnionInstances[instance] = true
+			end
 		end
+	end
+
+	local function canReadUnionGeometry(instance)
+		for propertyName in CriticalUnionProperties do
+			local ok, result = pcall(index, instance, propertyName)
+			if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+				return true
+			end
+
+			if gethiddenproperty then
+				ok, result = pcall(gethiddenproperty, instance, propertyName)
+				if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+					return true
+				end
+			end
+
+			ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
+			if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+				return true
+			end
+		end
+
+		UnreadableUnionInstances[instance] = true
+		return false
 	end
 
 	local function ReadProperty(instance, property, propertyName, special, category, optional)
@@ -2737,7 +2785,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						continue -- They won't show up in Studio anyway (Enable SaveNotCreatable if you wish to bypass this)
 					end
 				else -- ! Assuming nothing that is a PartOperation or inherits from it is in NotCreatableFixes
-					if TreatUnionsAsParts and instance:IsA("PartOperation") then
+					if
+						instance:IsA("PartOperation")
+						and (TreatUnionsAsParts or TreatUnreadableUnionsAsParts and not canReadUnionGeometry(instance))
+					then
 						ClassName, InstanceOverride = "Part", replaceClassName(instance, InstanceName, ClassName)
 						ClassNameOverride = "BasePart" -- * Mutual Superclass for PartOperation and Part; For properties only
 					elseif not ClassList[ClassName] then -- ? API Dump is outdated then
@@ -3332,14 +3383,27 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		table.clear(SharedStrings)
 		if next(TriangleMeshReadFailures) then
 			local failure_summary = {}
-			for propertyName, count in TriangleMeshReadFailures do
-				failure_summary[#failure_summary + 1] = propertyName .. "=" .. count
+			for className, failures in TriangleMeshReadFailures do
+				for propertyName, count in failures do
+					failure_summary[#failure_summary + 1] = className .. "." .. propertyName .. "=" .. count
+				end
 			end
 			table.sort(failure_summary)
+			local unreadable_union_count = 0
+			for _ in UnreadableUnionInstances do
+				unreadable_union_count += 1
+			end
 			warn(
-				"[saveinstance] Some UnionOperation/MeshPart geometry properties could not be read by this executor: "
+				"[saveinstance] Some TriangleMeshPart geometry properties could not be read by this executor: "
 					.. table.concat(failure_summary, ", ")
 			)
+			if unreadable_union_count ~= 0 then
+				warn(
+					"[saveinstance] "
+						.. unreadable_union_count
+						.. " UnionOperation/PartOperation instances are missing readable CSG geometry. They cannot be preserved exactly with this executor."
+				)
+			end
 		end
 	end
 
