@@ -1169,6 +1169,7 @@ end
 
 local ClassList
 local RequiredSharedStringProperties
+local CriticalTriangleMeshProperties
 
 do
 	local ClassPropertyExceptions = {
@@ -1185,8 +1186,22 @@ do
 			"MeshData2",
 			"PhysicalConfigData",
 			"AeroMeshData",
+			"SerializedOperationGraph",
+			"ManifoldMesh_DEPRECATED",
 		}),
 	}
+
+	CriticalTriangleMeshProperties = ArrayToDict({
+		"AeroMeshData",
+		"ChildData",
+		"ChildData2",
+		"ManifoldMesh_DEPRECATED",
+		"MeshData",
+		"MeshData2",
+		"PhysicalConfigData",
+		"PhysicsData",
+		"SerializedOperationGraph",
+	})
 
 	local NotScriptableFixes = { --[[
 		For more info: 
@@ -2481,9 +2496,20 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			and (category == "Enum" or string_find(result, "Unable to get property " .. propertyName))
 	end
 
+	local function isCriticalTriangleMeshProperty(instance, propertyName)
+		return CriticalTriangleMeshProperties[propertyName] and instance:IsA("TriangleMeshPart")
+	end
+
 	local IPM_ENABLED = math.huge <= CLIENT_VERSION and IgnoreDefaultProperties -- ! NOT ENABLED YET
 	local IPM_DISABLED = not IPM_ENABLED
 	local __BREAK = "__BREAK" .. service.HttpService:GenerateGUID(false)
+	local TriangleMeshReadFailures = {}
+
+	local function recordTriangleMeshReadFailure(instance, propertyName)
+		if isCriticalTriangleMeshProperty(instance, propertyName) then
+			TriangleMeshReadFailures[propertyName] = (TriangleMeshReadFailures[propertyName] or 0) + 1
+		end
+	end
 
 	local function ReadProperty(instance, property, propertyName, special, category, optional)
 		local raw = __BREAK
@@ -2516,7 +2542,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				if filterPropVal(raw, propertyName, category) then
 					-- * Skip next time we encounter this too perhaps (unless there's a chance for it to be readable on other instance, somehow)
 
-					if result ~= nil or not optional then
+					if (result ~= nil or not optional) and not isCriticalTriangleMeshProperty(instance, propertyName) then
 						if __DEBUG_MODE then
 							__DEBUG_MODE("Filtered", propertyName)
 						end
@@ -2777,9 +2803,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						local ValueType = Property.ValueType
 
 						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
-							local RequiredSharedStrings = instance:IsA("PartOperation")
-								and RequiredSharedStringProperties.PartOperation
-							if not (RequiredSharedStrings and RequiredSharedStrings[PropertyName]) then
+							local shouldPreserveSharedString = instance:IsA("TriangleMeshPart")
+								or (
+									instance:IsA("PartOperation")
+									and RequiredSharedStringProperties.PartOperation[PropertyName]
+								)
+							if not shouldPreserveSharedString then
 								continue
 							end
 						end
@@ -2821,9 +2850,11 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 											-- TODO Maybe remove the fix during runtime if it fails to avoid re-trying
 											__DEBUG_MODE("Fix Failed", PropertyName)
 										end
+										recordTriangleMeshReadFailure(instance, PropertyName)
 										continue
 									end
 								else
+									recordTriangleMeshReadFailure(instance, PropertyName)
 									continue
 								end
 							end
@@ -3299,6 +3330,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			end
 		end
 		table.clear(SharedStrings)
+		if next(TriangleMeshReadFailures) then
+			local failure_summary = {}
+			for propertyName, count in TriangleMeshReadFailures do
+				failure_summary[#failure_summary + 1] = propertyName .. "=" .. count
+			end
+			table.sort(failure_summary)
+			warn(
+				"[saveinstance] Some UnionOperation/MeshPart geometry properties could not be read by this executor: "
+					.. table.concat(failure_summary, ", ")
+			)
+		end
 	end
 
 	local Connections
