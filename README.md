@@ -7,7 +7,7 @@ join our own discord server if u want lol
 # Loadstring
 
 ```lua
-local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/verysigmapro/UniversalSynSaveInstance-With-Save-Terrain/refs/heads/main/saveinstance.luau", true), "saveinstance")();
+local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")();
 local SaveinstanceOptions = {  }
 synsaveinstance(SaveinstanceOptions);
 ```
