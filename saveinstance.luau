@@ -18,6 +18,12 @@ local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local table = table
 local string = string
 local math = math
+local floor = math.floor
+local b64chars = table.create(64)
+for i = 1, 64 do
+	b64chars[i] = string.sub(b, i, i)
+end
+
 local function to_base64(data)
 	local len = #data
 	local result = table.create(math.ceil(len / 3) * 4)
@@ -27,10 +33,10 @@ local function to_base64(data)
 		local byte1, byte2, byte3 = string.byte(data, i, i + 2)
 		local triplet = byte1 * 0x10000 + (byte2 or 0) * 0x100 + (byte3 or 0)
 
-		result[result_size] = string.sub(b, math.floor(triplet / 0x40000) % 64 + 1, math.floor(triplet / 0x40000) % 64 + 1)
-		result[result_size + 1] = string.sub(b, math.floor(triplet / 0x1000) % 64 + 1, math.floor(triplet / 0x1000) % 64 + 1)
-		result[result_size + 2] = byte2 and string.sub(b, math.floor(triplet / 0x40) % 64 + 1, math.floor(triplet / 0x40) % 64 + 1) or "="
-		result[result_size + 3] = byte3 and string.sub(b, triplet % 64 + 1, triplet % 64 + 1) or "="
+		result[result_size] = b64chars[floor(triplet / 0x40000) % 64 + 1]
+		result[result_size + 1] = b64chars[floor(triplet / 0x1000) % 64 + 1]
+		result[result_size + 2] = byte2 and b64chars[floor(triplet / 0x40) % 64 + 1] or "="
+		result[result_size + 3] = byte3 and b64chars[triplet % 64 + 1] or "="
 		result_size += 4
 	end
 
@@ -1840,7 +1846,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 	end
 
-	local currentstr, currentsize, totalsize, chunks = "", 0, 0, table.create(1)
+	local currentchunk, currentchunk_size, currentsize, totalsize, chunks = table.create(8), 1, 0, 0, table.create(1)
 	local savebuffer, savebuffer_size = {}, 1
 	local header = '<roblox version="4">'
 
@@ -2733,20 +2739,22 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local CHUNK_LIMIT = 200 * 1024 * 1024 -- string length overflow prevention
 	local function save_cache(final)
 		local savestr = table.concat(savebuffer)
-		currentstr ..= savestr -- TODO: Causes "not enough memory" error on some exec
 
 		-- writefile(placename, totalstr)
 		-- appendfile(placename, savestr) -- * supposedly causes uneven amount of Tags (e.g. <Item> must be closed with </Item> but sometimes there's more of one than the other). While being under load, the function produces unexpected output?
 		local savestr_len = #savestr
 		totalsize += savestr_len
 		currentsize += savestr_len
+		currentchunk[currentchunk_size] = savestr
+		currentchunk_size += 1
 
 		table.clear(savebuffer)
 		savebuffer_size = 1
 
 		if CHUNK_LIMIT < currentsize or final then
-			table.insert(chunks, { size = currentsize, str = currentstr })
-			currentstr, currentsize = "", 0
+			chunks[#chunks + 1] = { size = currentsize, str = table.concat(currentchunk) }
+			table.clear(currentchunk)
+			currentchunk_size, currentsize = 1, 0
 		end
 
 		if StatusText then
@@ -2866,7 +2874,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				savebuffer_size += 1
 				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSourceContainer(instance)) then
 					local default_instance, new_def_inst
-					local savedProperties = {}
+					local isMeshPart = instance:IsA("MeshPart")
+					local savedProperties = isMeshPart and {}
 
 					if IPM_DISABLED and IgnoreDefaultProperties then
 						default_instance = default_instances[ClassName]
@@ -2905,7 +2914,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
 							local shouldPreserveSharedString = instance:IsA("TriangleMeshPart")
 								or instance:IsA("BaseWrap")
-								or instance:IsA("MeshPart")
+								or isMeshPart
 								or (
 									instance:IsA("PartOperation")
 									and RequiredSharedStringProperties.PartOperation[PropertyName]
@@ -3153,13 +3162,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if tag then
 							savebuffer[savebuffer_size] = ReturnProperty(tag, PropertyName, value)
 							savebuffer_size += 1
-							savedProperties[PropertyName] = true
+							if savedProperties then
+								savedProperties[PropertyName] = true
+							end
 						else --if __DEBUG_MODE then -- * We print this anyway because very important
 							warn("UNSUPPORTED TYPE (OPEN A GITHUB ISSUE): ", ValueType, ClassName, PropertyName)
 						end
 					end
 
-					if instance:IsA("MeshPart") then
+					if isMeshPart then
 						local function saveForcedProperty(propertyName, sourcePropertyName, valueType)
 							if savedProperties[propertyName] then
 								return
@@ -3375,12 +3386,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			)
 		end
 		do
-			local tmp = { "<SharedStrings>" }
+			local tmp, tmp_size = { "<SharedStrings>" }, 2
 			for identifier, value in SharedStrings do
-				table.insert(tmp, '<SharedString md5="' .. identifier .. '">' .. value .. "</SharedString>")
+				tmp[tmp_size] = '<SharedString md5="' .. identifier .. '">' .. value .. "</SharedString>"
+				tmp_size += 1
 			end
 
-			if 1 < #tmp then -- TODO: This sucks so much because we try to iterate a table just to check this (check above)
+			if 2 < tmp_size then
 				savebuffer[savebuffer_size] = table.concat(tmp)
 				savebuffer_size += 1
 				savebuffer[savebuffer_size] = "</SharedStrings>"
@@ -3447,10 +3459,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 			local Callback = OPTIONS.Callback
 			if Callback then
-				local totalstr = header
-				for _, chunk in chunks do
-					totalstr ..= chunk.str
+				local output = table.create(#chunks + 1)
+				output[1] = header
+				for i, chunk in chunks do
+					output[i + 1] = chunk.str
 				end
+				local totalstr = table.concat(output)
 				Callback(totalstr, chunks, totalsize)
 			elseif OPTIONS.AlternativeWritefile and appendfile then
 				local SEGMENT_SIZE = 4145728 -- Celery has an arbitrary savefile/appendfile size limit of ~4MB for reasons unknown. This is a workaround to save the file in segments.
@@ -3478,10 +3492,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					end
 				end
 			else
-				local totalstr = header
-				for _, chunk in chunks do
-					totalstr ..= chunk.str
+				local output = table.create(#chunks + 1)
+				output[1] = header
+				for i, chunk in chunks do
+					output[i + 1] = chunk.str
 				end
+				local totalstr = table.concat(output)
 				run_with_loading(
 					"Writing " .. get_size_format() .. " to File (Depends on Exec)",
 					nil,

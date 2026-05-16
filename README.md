@@ -1,7 +1,6 @@
-[Discord](https://discord.gg/cbg4ARTpDJ)
-join our own discord server if u want lol
+all credits to USSI, i only did some changes
 
-# LIST OF WORKING GETHIDDENPROPERTY EXEC: FLUXUS,SWIFT,velocity
+# LIST OF WORKING GETHIDDENPROPERTY EXEC: madium,yubx,velocity and others
 # https://github.com/luau/UniversalSynSaveInstance
 
 # Loadstring
