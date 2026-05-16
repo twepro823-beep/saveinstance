@@ -119,6 +119,18 @@ local function valueToString(value)
 	return tostring(value)
 end
 
+local function isEmptyContentValue(value)
+	if value == nil or value == "" then
+		return true
+	elseif typeof(value) == "Content" then
+		local ok, sourceType = pcall(function()
+			return value.SourceType
+		end)
+		return ok and sourceType == Enum.ContentSourceType.None
+	end
+	return false
+end
+
 local function inspectProperties(lines, instance, properties)
 	append(lines, "    properties:")
 	for _, propertyName in properties do
@@ -128,6 +140,21 @@ local function inspectProperties(lines, instance, properties)
 		else
 			append(lines, "      ", propertyName, " = <unreadable>")
 		end
+	end
+end
+
+local function inspectContentConflict(lines, instance, legacyProperty, contentProperty)
+	local legacyOk, legacyValue = safeRead(instance, legacyProperty)
+	local contentOk, contentValue = safeRead(instance, contentProperty)
+	if legacyOk and legacyValue ~= nil and legacyValue ~= "" and contentOk and isEmptyContentValue(contentValue) then
+		append(
+			lines,
+			"    NOTE: ",
+			contentProperty,
+			" is empty while ",
+			legacyProperty,
+			" is set; saveinstance should skip the empty Content value."
+		)
 	end
 end
 
@@ -254,6 +281,8 @@ local function main()
 				"CollisionFidelity",
 				"MeshSize",
 			})
+			inspectContentConflict(lines, descendant, "MeshId", "MeshContent")
+			inspectContentConflict(lines, descendant, "TextureID", "TextureContent")
 		end
 	end
 	append(lines, "")
@@ -303,6 +332,8 @@ local function main()
 		if handle then
 			append(lines, "    Handle: ", handle.ClassName, " Archivable=", handle.Archivable)
 			inspectProperties(lines, handle, { "Size", "MeshId", "MeshContent", "TextureID", "TextureContent", "MeshSize" })
+			inspectContentConflict(lines, handle, "MeshId", "MeshContent")
+			inspectContentConflict(lines, handle, "TextureID", "TextureContent")
 		else
 			append(lines, "    Handle: MISSING")
 		end

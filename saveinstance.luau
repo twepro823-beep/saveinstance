@@ -2585,6 +2585,18 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 	end
 
+	local function isEmptyContentValue(raw)
+		if raw == nil or raw == "" then
+			return true
+		elseif typeof(raw) == "Content" then
+			local ok, sourceType = pcall(function()
+				return raw.SourceType
+			end)
+			return ok and sourceType == Enum.ContentSourceType.None
+		end
+		return false
+	end
+
 	local function ReadProperty(instance, property, propertyName, special, category, optional)
 		local raw = __BREAK
 
@@ -2946,6 +2958,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						end
 
 						if shouldSkipEmptyGeometryProperty(instance, PropertyName, raw) then
+							continue
+						end
+
+						if ValueType == "Content" and isEmptyContentValue(raw) then
 							continue
 						end
 
