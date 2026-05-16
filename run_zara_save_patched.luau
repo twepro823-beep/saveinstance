@@ -10,6 +10,15 @@ local inspectUrl = "https://raw.githubusercontent.com/twepro823-beep/saveinstanc
 
 print("[zara patched test] loading saveinstance:", saveUrl)
 
+for _, descendant in TARGET:GetDescendants() do
+	if descendant:IsA("MeshPart") then
+		descendant:SetAttribute("_SSI_BackupMeshId", descendant.MeshId)
+		descendant:SetAttribute("_SSI_BackupTextureID", descendant.TextureID)
+		descendant:SetAttribute("_SSI_BackupSize", descendant.Size)
+		descendant:SetAttribute("_SSI_BackupMeshSize", descendant.MeshSize)
+	end
+end
+
 local synsaveinstance = loadstring(game:HttpGet(saveUrl, true), "saveinstance")()
 
 synsaveinstance({
