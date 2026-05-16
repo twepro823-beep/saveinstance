@@ -1184,6 +1184,7 @@ do
 		Blacklist = {
 			LuaSourceContainer = ArrayToDict({ "ScriptGuid" }),
 			Instance = ArrayToDict({ "UniqueId", "HistoryId" }),
+			MeshPart = ArrayToDict({ "HasSkinnedMesh" }),
 		},
 	}
 
