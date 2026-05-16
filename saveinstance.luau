@@ -1184,7 +1184,16 @@ do
 		Blacklist = {
 			LuaSourceContainer = ArrayToDict({ "ScriptGuid" }),
 			Instance = ArrayToDict({ "UniqueId", "HistoryId" }),
-			MeshPart = ArrayToDict({ "HasSkinnedMesh" }),
+			MeshPart = ArrayToDict({ "HasSkinnedMesh", "MeshContent", "TextureContent" }),
+			BaseWrap = ArrayToDict({ "CageMeshContent" }),
+			WrapLayer = ArrayToDict({ "ReferenceMeshContent" }),
+			SurfaceAppearance = ArrayToDict({
+				"ColorMapContent",
+				"EmissiveMaskContent",
+				"MetalnessMapContent",
+				"NormalMapContent",
+				"RoughnessMapContent",
+			}),
 		},
 	}
 
