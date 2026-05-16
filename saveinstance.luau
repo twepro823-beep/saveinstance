@@ -2866,6 +2866,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				savebuffer_size += 1
 				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSourceContainer(instance)) then
 					local default_instance, new_def_inst
+					local savedProperties = {}
 
 					if IPM_DISABLED and IgnoreDefaultProperties then
 						default_instance = default_instances[ClassName]
@@ -3151,9 +3152,39 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if tag then
 							savebuffer[savebuffer_size] = ReturnProperty(tag, PropertyName, value)
 							savebuffer_size += 1
+							savedProperties[PropertyName] = true
 						else --if __DEBUG_MODE then -- * We print this anyway because very important
 							warn("UNSUPPORTED TYPE (OPEN A GITHUB ISSUE): ", ValueType, ClassName, PropertyName)
 						end
+					end
+
+					if instance:IsA("MeshPart") then
+						local function saveForcedProperty(propertyName, sourcePropertyName, valueType)
+							if savedProperties[propertyName] then
+								return
+							end
+
+							local ok, raw = pcall(index, instance, sourcePropertyName or propertyName)
+							if not ok or raw == nil or raw == "" then
+								return
+							end
+
+							local descriptor = XML_Descriptors[valueType]
+							if not descriptor then
+								return
+							end
+
+							local value, tag = ReturnValueAndTag(raw, valueType, descriptor)
+							if tag then
+								savebuffer[savebuffer_size] = ReturnProperty(tag, propertyName, value)
+								savebuffer_size += 1
+								savedProperties[propertyName] = true
+							end
+						end
+
+						saveForcedProperty("MeshId", nil, "ContentId")
+						saveForcedProperty("TextureID", nil, "ContentId")
+						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
 					end
 				end
 				savebuffer[savebuffer_size] = "</Properties>"
