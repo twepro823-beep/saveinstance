@@ -2905,6 +2905,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
 							local shouldPreserveSharedString = instance:IsA("TriangleMeshPart")
 								or instance:IsA("BaseWrap")
+								or instance:IsA("MeshPart")
 								or (
 									instance:IsA("PartOperation")
 									and RequiredSharedStringProperties.PartOperation[PropertyName]
@@ -3165,6 +3166,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							end
 
 							local ok, raw = pcall(index, instance, sourcePropertyName or propertyName)
+							if (not ok or raw == nil) and gethiddenproperty then
+								ok, raw = pcall(gethiddenproperty, instance, sourcePropertyName or propertyName)
+							end
+							if (not ok or raw == nil) then
+								ok, raw = pcall(gethiddenproperty_fallback, instance, sourcePropertyName or propertyName)
+							end
 							if not ok or raw == nil or raw == "" then
 								return
 							end
@@ -3185,6 +3192,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						saveForcedProperty("MeshId", nil, "ContentId")
 						saveForcedProperty("TextureID", nil, "ContentId")
 						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
+						saveForcedProperty("PhysicsData", nil, "BinaryString")
 					end
 				end
 				savebuffer[savebuffer_size] = "</Properties>"
