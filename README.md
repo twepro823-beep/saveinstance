@@ -13,7 +13,7 @@ local SaveinstanceOptions = {
     TreatUnreadableUnionsAsParts = false,
     IgnoreSpecialProperties = false,
     IgnoreSharedStrings = false,
-    ReadMe = false,
+    ReadMe = true,
     ScriptSourceHeader = false,
     LinkedSourceComment = false,
 }
