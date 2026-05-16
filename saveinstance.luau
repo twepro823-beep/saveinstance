@@ -2705,17 +2705,32 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return value, tag or valueType
 	end
 
+	local InheritsFixCaches = setmetatable({}, { __mode = "k" })
 	local function InheritsFix(fixes, className, instance)
+		local cache = InheritsFixCaches[fixes]
+		if not cache then
+			cache = {}
+			InheritsFixCaches[fixes] = cache
+		end
+
+		local cached = cache[className]
+		if cached ~= nil then
+			return cached or nil
+		end
+
 		local Fix = fixes[className]
 		if Fix then
+			cache[className] = Fix
 			return Fix
 		elseif Fix == nil then
 			for class_name, fix in fixes do
 				if instance:IsA(class_name) then
+					cache[className] = fix
 					return fix
 				end
 			end
 		end
+		cache[className] = false
 	end
 
 	local function GetInheritedProps(className)
@@ -3418,7 +3433,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						search = string.lower(search)
 
 						local lastFinish = 0
-						local subStrings = {}
+						local subStrings, subStrings_size = {}, 1
 						local search_len = #search
 						local input_len = #input
 						while search_len <= input_len - lastFinish do
@@ -3430,7 +3445,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 								break
 							end
 
-							table.insert(subStrings, string.sub(input, init, start - 1))
+							subStrings[subStrings_size] = string.sub(input, init, start - 1)
+							subStrings_size += 1
 
 							lastFinish = finish
 						end
@@ -3439,7 +3455,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							return input
 						end
 
-						table.insert(subStrings, string.sub(input, lastFinish + 1))
+						subStrings[subStrings_size] = string.sub(input, lastFinish + 1)
 
 						return table.concat(subStrings, replacement)
 					end
