@@ -858,11 +858,19 @@ XML_Descriptors = {
 		end)
 	end,
 	Content = function(raw)
+		if raw == nil then
+			return "<null></null>"
+		elseif type(raw) == "string" then
+			return XML_Descriptors.ContentId(raw)
+		end
+
 		local SourceType = raw.SourceType
-		return SourceType == Enum.ContentSourceType.None and "<null></null>"
-			or SourceType == Enum.ContentSourceType.Uri and "<uri>" .. XML_Descriptors.string(raw.Uri) .. "</uri>"
-			or SourceType == Enum.ContentSourceType.Object and "<Ref>" .. GetRef(raw.Object)
-			.. "</Ref>" -- TODO Not sure, run tests
+		if SourceType == Enum.ContentSourceType.Uri then
+			return "<uri>" .. XML_Descriptors.string(raw.Uri) .. "</uri>"
+		elseif SourceType == Enum.ContentSourceType.Object then
+			return "<Ref>" .. GetRef(raw.Object) .. "</Ref>" -- TODO Not sure, run tests
+		end
+		return "<null></null>"
 	end,
 	ContentId = function(raw)
 		return raw == "" and "<null></null>" or "<url>" .. XML_Descriptors.string(raw) .. "</url>", "Content" -- TODO Remove "Content" str once Roblox fully releases Content DataType
@@ -1162,11 +1170,6 @@ for descriptorName, redirectName in
 do
 	XML_Descriptors[descriptorName] = XML_Descriptors[redirectName]
 end
-if CLIENT_VERSION < math.huge then -- math.huge because unknown yet
-	-- ! For sake of compatibility with older clients, Roblox currently does this too but it WILL probably change in the future so keep track of that. ONCE ROBLOX MOVES AWAY FROM THIS, MAKE SURE TO KEEP SUPPORT FOR VERY OLD CLIENTS; 645 <= CLIENT Ver < ??? (ver when roblox moves away), THIS IS COMPLICATED SO PROBABLY NO SUPPORT, JUST USE OLDER VER OF USSI; NEWEST CLIENTS
-	XML_Descriptors.Content = XML_Descriptors.ContentId
-end
-
 local ClassList
 local RequiredSharedStringProperties
 local CriticalTriangleMeshProperties
@@ -1641,10 +1644,6 @@ do
 
 							local ValueType = Member.ValueType
 							local ValueType_Name = ValueType.Name
-
-							if 645 <= CLIENT_VERSION and ValueType_Name == "Content" then -- TODO: Remove after Roblox adds a descriptor for it
-								continue
-							end
 
 							local Special, PreferredDescriptorName
 
@@ -2882,6 +2881,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
 							local shouldPreserveSharedString = instance:IsA("TriangleMeshPart")
+								or instance:IsA("BaseWrap")
 								or (
 									instance:IsA("PartOperation")
 									and RequiredSharedStringProperties.PartOperation[PropertyName]
