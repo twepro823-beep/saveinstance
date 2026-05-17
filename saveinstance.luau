@@ -3072,7 +3072,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSourceContainer(instance)) then
 					local default_instance, new_def_inst
 					local isMeshPart = instance:IsA("MeshPart")
-					local savedProperties = isMeshPart and {}
+					local isTriangleMeshPart = instance:IsA("TriangleMeshPart") and ClassName ~= "Part"
+					local savedProperties = (isMeshPart or isTriangleMeshPart) and {}
 
 					if IPM_DISABLED and IgnoreDefaultProperties then
 						default_instance = default_instances[ClassName]
@@ -3367,9 +3368,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						end
 					end
 
-					if isMeshPart then
+					if isTriangleMeshPart then
 						local function saveForcedProperty(propertyName, sourcePropertyName, valueType)
-							if savedProperties[propertyName] then
+							if savedProperties[propertyName] or IgnoreProperties[propertyName] then
 								return
 							end
 
@@ -3384,12 +3385,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 								return
 							end
 
-							local descriptor = XML_Descriptors[valueType]
-							if not descriptor then
-								return
-							end
+							local value, tag
+							if valueType == "Enum" then
+								value, tag = XML_Descriptors.__ENUM(raw)
+							else
+								local descriptor = XML_Descriptors[valueType]
+								if not descriptor then
+									return
+								end
 
-							local value, tag = ReturnValueAndTag(raw, valueType, descriptor)
+								value, tag = ReturnValueAndTag(raw, valueType, descriptor)
+							end
 							if tag then
 								savebuffer[savebuffer_size] = ReturnProperty(tag, propertyName, value)
 								savebuffer_size += 1
@@ -3397,10 +3403,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							end
 						end
 
-						saveForcedProperty("MeshId", nil, "ContentId")
-						saveForcedProperty("TextureID", nil, "ContentId")
-						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
+						saveForcedProperty("CollisionFidelity", nil, "Enum")
 						saveForcedProperty("PhysicsData", nil, "BinaryString")
+						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
+						if isMeshPart then
+							saveForcedProperty("MeshId", nil, "ContentId")
+							saveForcedProperty("TextureID", nil, "ContentId")
+						end
 					end
 				end
 				savebuffer[savebuffer_size] = "</Properties>"
@@ -3547,18 +3556,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		If the chat system does not work, please use the explorer and delete everything inside the TextChatService/Chat service(s). 
 		Or run `game:GetService("Chat"):ClearAllChildren() game:GetService("TextChatService"):ClearAllChildren()`
 				
-		If Union and MeshPart collisions don't work, run the script below in the Studio Command Bar:
-				
-				
-		local C = game:GetService("CoreGui")
-		local D = Enum.CollisionFidelity.Default
-				
-		for _, v in game:GetDescendants() do
-			if v:IsA("TriangleMeshPart") and not v:IsDescendantOf(C) then
-				v.CollisionFidelity = D
-			end
-		end
-		print("Done")
+		If some Union or MeshPart collisions still do not match the original game, your executor likely could not read one or more internal geometry/collision properties. This saveinstance tries to preserve CollisionFidelity and PhysicsData automatically; forcing every TriangleMeshPart to CollisionFidelity.Default is not recommended because it can make collision less faithful.
 				
 		If you can't move the Camera, run this script in the Studio Command Bar:
 			
