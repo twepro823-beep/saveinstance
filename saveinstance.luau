@@ -5,15 +5,6 @@
 --!divine-intellect
 -- https://discord.gg/wx4ThpAsmw
 
-local realcheck = true
-local imagonnaaddmorecheck, _ = pcall(function()
-	gethiddenproperty(workspace.Terrain, "SmoothGrid")
-end)
-
-if not imagonnaaddmorecheck then
-	realcheck = false
-end
-
 local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local table = table
 local string = string
@@ -41,18 +32,6 @@ local function to_base64(data)
 	end
 
 	return table.concat(result)
-end
-
-if gethiddenproperty and realcheck then
-	local SmoothGridOk, SmoothGrid = pcall(gethiddenproperty, workspace.Terrain, "SmoothGrid")
-	local PhysicsGridOk, PhysicsGrid = pcall(gethiddenproperty, workspace.Terrain, "PhysicsGrid")
-
-	if SmoothGridOk and PhysicsGridOk and type(SmoothGrid) == "string" and type(PhysicsGrid) == "string" then
-		getfenv().physicsgrid = to_base64(PhysicsGrid)
-		getfenv().smoothgrid = to_base64(SmoothGrid)
-	else
-		realcheck = false
-	end
 end
 
 local function string_find(s, pattern)
@@ -2834,13 +2813,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return raw
 	end
 
+	local getTerrainGridTags
 	local function ReturnItem(className, instance)
 		--return '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>' -- TODO: Ideally this shouldn't return <Properties> as well as the line below to close it IF  IgnorePropertiesOfNotScriptsOnScriptsMode is Enabled OR If all properties are default (reduces file size by at least 1.4%)
 		local itemstring = '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>'
-		if className == "Terrain" and realcheck then
-			itemstring = itemstring ..
-				'<BinaryString name="PhysicsGrid"><![CDATA[' .. getfenv().physicsgrid .. ']]></BinaryString>' ..
-				'<BinaryString name="SmoothGrid"><![CDATA[' .. getfenv().smoothgrid .. ']]></BinaryString>'
+		if className == "Terrain" then
+			local terrainGridTags = getTerrainGridTags(instance)
+			if terrainGridTags then
+				itemstring ..= terrainGridTags
+			end
 		end
 		return itemstring
 	end
@@ -2899,6 +2880,43 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 		inherited_properties[className] = prop_list
 		return prop_list
+	end
+
+	local TerrainGridCache = setmetatable({}, { __mode = "k" })
+	local function readTerrainGrid(instance, propertyName)
+		local ok, value
+		if gethiddenproperty then
+			ok, value = pcall(gethiddenproperty, instance, propertyName)
+			if ok and type(value) == "string" then
+				return value
+			end
+		end
+
+		ok, value = pcall(gethiddenproperty_fallback, instance, propertyName)
+		if ok and type(value) == "string" then
+			return value
+		end
+	end
+
+	function getTerrainGridTags(instance)
+		local cached = TerrainGridCache[instance]
+		if cached ~= nil then
+			return cached or nil
+		end
+
+		local PhysicsGrid = readTerrainGrid(instance, "PhysicsGrid")
+		local SmoothGrid = readTerrainGrid(instance, "SmoothGrid")
+		if PhysicsGrid and SmoothGrid then
+			local tags = '<BinaryString name="PhysicsGrid"><![CDATA['
+				.. to_base64(PhysicsGrid)
+				.. ']]></BinaryString><BinaryString name="SmoothGrid"><![CDATA['
+				.. to_base64(SmoothGrid)
+				.. "]]></BinaryString>"
+			TerrainGridCache[instance] = tags
+			return tags
+		end
+
+		TerrainGridCache[instance] = false
 	end
 
 	local CHUNK_LIMIT = 200 * 1024 * 1024 -- string length overflow prevention
