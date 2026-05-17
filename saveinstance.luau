@@ -1777,6 +1777,11 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- .ExtraInstances {Instance} -- If used with any invalid mode (like "invalidmode") it will only save these instances. ___Default:___ {}
 --- @field IgnoreProperties table -- Ignores properties by Name. ___Default:___ {}
 --- @field SaveCacheInterval number -- The less the value the more often it saves, but that would mean less performance due to constantly saving. ___Default:___ 0x1600 * 10
+--- @field PerformanceMode string -- Valid modes: balanced, speed, lowmemory. Balanced starts fast and streams automatically for large saves. ___Default:___ "balanced"
+--- @field LowMemory boolean -- Compatibility alias. true forces PerformanceMode = "lowmemory"; false forces PerformanceMode = "speed" when explicitly provided and PerformanceMode is not set directly. ___Default:___ false
+--- @field StreamWriteSize number -- Maximum appendfile segment size for streaming. ___Default:___ automatic by PerformanceMode
+--- @field AutoStreamThreshold number -- Size where balanced mode switches from memory buffering to streaming. ___Default:___ 96 * 1024 * 1024
+--- @field StatusUpdateInterval number -- Minimum seconds between saving status/render updates. ___Default:___ 0.25
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
 --- @field IsModel boolean -- If Object is specified then sets to true automatically, unless you set it to false. ___Default:___ false
@@ -1848,6 +1853,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local currentchunk, currentchunk_size, currentsize, totalsize, chunks = table.create(8), 1, 0, 0, table.create(1)
 	local savebuffer, savebuffer_size = {}, 1
+	local output_writer
+	local last_save_cache_render = 0
 	local header = '<roblox version="4">'
 
 	local StatusText
@@ -1885,6 +1892,11 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		NilInstancesFixes = {},
 
 		SaveCacheInterval = 0x1600 * 10,
+		PerformanceMode = "balanced",
+		LowMemory = false,
+		StreamWriteSize = nil,
+		AutoStreamThreshold = 96 * 1024 * 1024,
+		StatusUpdateInterval = 0.25,
 		ShowStatus = true,
 		SafeMode = false,
 		ShutdownWhenDone = false,
@@ -2099,6 +2111,26 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local FilePath = OPTIONS.FilePath
 	local SaveCacheInterval = OPTIONS.SaveCacheInterval
+	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "balanced"))
+	if CustomOptions_valid.LowMemory and not CustomOptions_valid.PerformanceMode then
+		if OPTIONS.LowMemory then
+			PerformanceMode = "lowmemory"
+		elseif OPTIONS.LowMemory == false then
+			PerformanceMode = "speed"
+		end
+	end
+	if PerformanceMode ~= "balanced" and PerformanceMode ~= "speed" and PerformanceMode ~= "lowmemory" then
+		PerformanceMode = "balanced"
+	end
+	local StreamWriteSize = OPTIONS.StreamWriteSize
+	local AutoStreamThreshold = OPTIONS.AutoStreamThreshold
+	local StatusUpdateInterval = OPTIONS.StatusUpdateInterval
+	if type(AutoStreamThreshold) ~= "number" or AutoStreamThreshold < 1024 then
+		AutoStreamThreshold = 96 * 1024 * 1024
+	end
+	if type(StatusUpdateInterval) ~= "number" or StatusUpdateInterval < 0 then
+		StatusUpdateInterval = 0.25
+	end
 	local ToSaveInstance = OPTIONS.Object
 	local IsModel = OPTIONS.IsModel
 
@@ -2374,6 +2406,123 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 
 		return unpack(result)
+	end
+
+	local function create_output_writer()
+		local can_stream = OPTIONS.AlternativeWritefile
+			and appendfile
+			and writefile
+			and not OPTIONS.Callback
+			and not OPTIONS.Anonymous
+
+		if not can_stream or PerformanceMode == "speed" then
+			return { mode = "memory" }
+		end
+
+		local write_size = type(StreamWriteSize) == "number" and StreamWriteSize
+			or (PerformanceMode == "lowmemory" and 4 * 1024 * 1024 or 8 * 1024 * 1024)
+		if write_size < 1024 then
+			write_size = PerformanceMode == "lowmemory" and 4 * 1024 * 1024 or 8 * 1024 * 1024
+		end
+
+		local pending, pending_size, pending_len = table.create(8), 1, 0
+		local writer = {
+			mode = PerformanceMode == "lowmemory" and "stream" or "adaptive",
+			streaming = false,
+			stream_failed = false,
+			stream_error = nil,
+		}
+
+		local function append_segment(str)
+			local ok_append, err_append = pcall(appendfile, placename, str)
+			if not ok_append then
+				error("[saveinstance] appendfile failed while streaming output: " .. tostring(err_append), 2)
+			end
+		end
+
+		local function flush_pending()
+			if pending_len == 0 then
+				return
+			end
+
+			append_segment(table.concat(pending))
+			table.clear(pending)
+			pending_size, pending_len = 1, 0
+		end
+
+		function writer.begin_stream()
+			if writer.streaming or writer.stream_failed then
+				return writer.streaming
+			end
+
+			local ok, err = pcall(writefile, placename, header)
+			if not ok then
+				writer.stream_failed = true
+				writer.stream_error = err
+				writer.mode = "memory"
+				return false
+			end
+
+			writer.streaming = true
+			return true
+		end
+
+		function writer.write(str)
+			local str_len = #str
+			if str_len == 0 then
+				return true
+			end
+
+			if not writer.streaming and not writer.begin_stream() then
+				return false
+			end
+
+			if pending_len + str_len <= write_size then
+				pending[pending_size] = str
+				pending_size += 1
+				pending_len += str_len
+				return true
+			end
+
+			flush_pending()
+
+			local offset = 1
+			while write_size < str_len - offset + 1 do
+				append_segment(string.sub(str, offset, offset + write_size - 1))
+				offset += write_size
+				task.wait()
+			end
+
+			pending[pending_size] = string.sub(str, offset)
+			pending_size += 1
+			pending_len = str_len - offset + 1
+			return true
+		end
+
+		function writer.finish()
+			flush_pending()
+		end
+
+		return writer
+	end
+
+	local function stream_memory_chunks(writer)
+		if not writer.begin_stream() then
+			return false
+		end
+
+		for _, chunk in chunks do
+			writer.write(chunk.str)
+		end
+
+		if currentchunk_size ~= 1 then
+			writer.write(table.concat(currentchunk))
+		end
+
+		table.clear(chunks)
+		table.clear(currentchunk)
+		currentchunk_size, currentsize = 1, 0
+		return true
 	end
 
 	local function construct_TimeoutHandler(timeout, f, timeout_ret)
@@ -2755,29 +2904,61 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local function save_cache(final)
 		local savestr = table.concat(savebuffer)
 
-		-- writefile(placename, totalstr)
-		-- appendfile(placename, savestr) -- * supposedly causes uneven amount of Tags (e.g. <Item> must be closed with </Item> but sometimes there's more of one than the other). While being under load, the function produces unexpected output?
 		local savestr_len = #savestr
 		totalsize += savestr_len
-		currentsize += savestr_len
-		currentchunk[currentchunk_size] = savestr
-		currentchunk_size += 1
 
 		table.clear(savebuffer)
 		savebuffer_size = 1
 
-		if CHUNK_LIMIT < currentsize or final then
-			chunks[#chunks + 1] = { size = currentsize, str = table.concat(currentchunk) }
-			table.clear(currentchunk)
-			currentchunk_size, currentsize = 1, 0
+		if output_writer and (output_writer.mode == "stream" or output_writer.streaming) then
+			if not output_writer.write(savestr) then
+				currentsize += savestr_len
+				currentchunk[currentchunk_size] = savestr
+				currentchunk_size += 1
+				if CHUNK_LIMIT < currentsize or final then
+					chunks[#chunks + 1] = { size = currentsize, str = table.concat(currentchunk) }
+					table.clear(currentchunk)
+					currentchunk_size, currentsize = 1, 0
+				end
+			end
+		else
+			currentsize += savestr_len
+			currentchunk[currentchunk_size] = savestr
+			currentchunk_size += 1
+
+			if CHUNK_LIMIT < currentsize or final then
+				chunks[#chunks + 1] = { size = currentsize, str = table.concat(currentchunk) }
+				table.clear(currentchunk)
+				currentchunk_size, currentsize = 1, 0
+			end
+
+			if
+				output_writer
+				and output_writer.mode == "adaptive"
+				and not output_writer.streaming
+				and not output_writer.stream_failed
+				and AutoStreamThreshold
+				and AutoStreamThreshold <= totalsize
+			then
+				stream_memory_chunks(output_writer)
+			end
 		end
 
 		if StatusText then
-			StatusText.Text = "Saving.. Size: " .. get_size_format()
+			StatusText.Text = "Saving.. Size: "
+				.. get_size_format()
+				.. (
+					output_writer and output_writer.streaming and (
+						output_writer.mode == "adaptive" and " (adaptive stream)" or " (low memory)"
+					) or ""
+				)
 		end
-		-- ? Needed for at least 1fps (status text)
-		-- task.wait()
-		wait_for_render()
+		local now = os.clock()
+		local status_interval = type(StatusUpdateInterval) == "number" and StatusUpdateInterval or 0.25
+		if final or status_interval <= now - last_save_cache_render then
+			last_save_cache_render = now
+			wait_for_render()
+		end
 	end
 
 	local function save_specific(className, properties)
@@ -3267,7 +3448,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				header ..= '<Meta name="ExplicitAutoJoints">true</Meta>'
 			end
 
-			writefile(placename, header) -- TODO This is sort of useless if writefile will be used at the end (like if AlternativeWritefile and Callback are unused)
+			output_writer = create_output_writer()
 		end
 
 		-- TODO Find a better solution for this
@@ -3419,7 +3600,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			"</roblox>"
 		savebuffer_size += 1
 		save_cache(true)
-		do
+		if output_writer and output_writer.streaming then
+			output_writer.finish()
+		else
 			-- ! Assuming we only write to file once hence why we only filter once
 			-- TODO This might cause issues on non-unique Usernames (ex. "Cake" if game is about cakes then everything supposedly related to your name will be replaced with "Roblox"); Certain UserIds might also affect numbers, like if your UserId is 2481848 and there is some number that goes like "1.248184818837" then that the matched part will be replaced with 1, potentially making the number incorrect.
 			-- TODO So for now it's best to keep this disabled by default
@@ -3486,23 +3669,27 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				local SEGMENT_SIZE = 4145728 -- Celery has an arbitrary savefile/appendfile size limit of ~4MB for reasons unknown. This is a workaround to save the file in segments.
 
 				local totallen, currentlen = math.ceil(totalsize / SEGMENT_SIZE), 1
+				run_with_loading("Preparing File (Depends on Exec)", nil, true, writefile, placename, header)
 
 				for _, chunk in chunks do
 					local length = math.ceil(chunk.size / SEGMENT_SIZE)
 					for i = 1, length do
 						local savestr = string.sub(chunk.str, (i - 1) * SEGMENT_SIZE + 1, i * SEGMENT_SIZE)
 
-						run_with_loading(
-							"Writing to File " .. math.round(currentlen / totallen * 100) .. "% (Depends on Exec)",
-							nil,
-							true,
-							appendfile,
-							placename,
-							savestr
-						)
+						local ok_append, err_append = pcall(appendfile, placename, savestr)
+						if not ok_append then
+							error("[saveinstance] appendfile failed while writing output: " .. tostring(err_append), 2)
+						end
+
 						currentlen += 1
 
-						if i ~= length then
+						if StatusText then
+							StatusText.Text = "Writing to File "
+								.. math.round(currentlen / totallen * 100)
+								.. "% (Depends on Exec)"
+						end
+
+						if i ~= length and currentlen % 4 == 0 then
 							task.wait()
 						end
 					end
