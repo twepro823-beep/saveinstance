@@ -1777,10 +1777,11 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- .ExtraInstances {Instance} -- If used with any invalid mode (like "invalidmode") it will only save these instances. ___Default:___ {}
 --- @field IgnoreProperties table -- Ignores properties by Name. ___Default:___ {}
 --- @field SaveCacheInterval number -- The less the value the more often it saves, but that would mean less performance due to constantly saving. ___Default:___ 0x1600 * 10
---- @field PerformanceMode string -- Valid modes: balanced, speed, lowmemory. Balanced starts fast and streams automatically for large saves. ___Default:___ "balanced"
---- @field LowMemory boolean -- Compatibility alias. true forces PerformanceMode = "lowmemory"; false forces PerformanceMode = "speed" when explicitly provided and PerformanceMode is not set directly. ___Default:___ false
---- @field StreamWriteSize number -- Maximum appendfile segment size for streaming. ___Default:___ automatic by PerformanceMode
---- @field AutoStreamThreshold number -- Size where balanced mode switches from memory buffering to streaming. ___Default:___ 96 * 1024 * 1024
+--- @field AutoOptimize boolean -- Automatically balances speed, memory and executor stability. Starts fast and streams only when the save grows large. ___Default:___ true
+--- @field PerformanceMode string -- Deprecated compatibility option. Prefer AutoOptimize instead. ___Default:___ "auto"
+--- @field LowMemory boolean -- Deprecated compatibility alias. true starts streaming earlier when possible. ___Default:___ false
+--- @field StreamWriteSize number -- Maximum appendfile segment size for streaming. ___Default:___ automatic
+--- @field AutoStreamThreshold number -- Size where automatic mode switches from memory buffering to streaming. ___Default:___ 96 * 1024 * 1024
 --- @field StatusUpdateInterval number -- Minimum seconds between saving status/render updates. ___Default:___ 0.25
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
@@ -1892,7 +1893,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		NilInstancesFixes = {},
 
 		SaveCacheInterval = 0x1600 * 10,
-		PerformanceMode = "balanced",
+		AutoOptimize = true,
+		PerformanceMode = "auto",
 		LowMemory = false,
 		StreamWriteSize = nil,
 		AutoStreamThreshold = 96 * 1024 * 1024,
@@ -2111,16 +2113,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local FilePath = OPTIONS.FilePath
 	local SaveCacheInterval = OPTIONS.SaveCacheInterval
-	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "balanced"))
-	if CustomOptions_valid.LowMemory and not CustomOptions_valid.PerformanceMode then
-		if OPTIONS.LowMemory then
-			PerformanceMode = "lowmemory"
-		elseif OPTIONS.LowMemory == false then
-			PerformanceMode = "speed"
-		end
+	local AutoOptimize = OPTIONS.AutoOptimize ~= false
+	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "auto"))
+	local ForceLowMemory = CustomOptions_valid.LowMemory and OPTIONS.LowMemory == true
+	local ForceSpeed = CustomOptions_valid.PerformanceMode and PerformanceMode == "speed"
+	if PerformanceMode ~= "auto" and PerformanceMode ~= "balanced" and PerformanceMode ~= "speed" and PerformanceMode ~= "lowmemory" then
+		PerformanceMode = "auto"
 	end
-	if PerformanceMode ~= "balanced" and PerformanceMode ~= "speed" and PerformanceMode ~= "lowmemory" then
-		PerformanceMode = "balanced"
+	if PerformanceMode == "lowmemory" then
+		ForceLowMemory = true
 	end
 	local StreamWriteSize = OPTIONS.StreamWriteSize
 	local AutoStreamThreshold = OPTIONS.AutoStreamThreshold
@@ -2415,19 +2416,19 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			and not OPTIONS.Callback
 			and not OPTIONS.Anonymous
 
-		if not can_stream or PerformanceMode == "speed" then
+		if not can_stream or not AutoOptimize or ForceSpeed then
 			return { mode = "memory" }
 		end
 
 		local write_size = type(StreamWriteSize) == "number" and StreamWriteSize
-			or (PerformanceMode == "lowmemory" and 4 * 1024 * 1024 or 8 * 1024 * 1024)
+			or (ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024)
 		if write_size < 1024 then
-			write_size = PerformanceMode == "lowmemory" and 4 * 1024 * 1024 or 8 * 1024 * 1024
+			write_size = ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024
 		end
 
 		local pending, pending_size, pending_len = table.create(8), 1, 0
 		local writer = {
-			mode = PerformanceMode == "lowmemory" and "stream" or "adaptive",
+			mode = ForceLowMemory and "stream" or "adaptive",
 			streaming = false,
 			stream_failed = false,
 			stream_error = nil,
