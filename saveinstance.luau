@@ -2815,9 +2815,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return raw
 	end
 
+	local getTerrainGridTags
 	local function ReturnItem(className, instance)
 		--return '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>' -- TODO: Ideally this shouldn't return <Properties> as well as the line below to close it IF  IgnorePropertiesOfNotScriptsOnScriptsMode is Enabled OR If all properties are default (reduces file size by at least 1.4%)
-		return '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>'
+		local itemstring = '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>'
+		if className == "Terrain" then
+			local terrainGridTags = getTerrainGridTags(instance)
+			if terrainGridTags then
+				itemstring ..= terrainGridTags
+			end
+		end
+		return itemstring
 	end
 
 	local function ReturnProperty(tag, propertyName, value)
@@ -2876,6 +2884,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return prop_list
 	end
 
+	local TerrainGridCache = setmetatable({}, { __mode = "k" })
 	local function readTerrainGrid(instance, propertyName)
 		local ok, value
 		if gethiddenproperty then
@@ -2889,6 +2898,31 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		if ok and type(value) == "string" then
 			return value
 		end
+	end
+
+	function getTerrainGridTags(instance)
+		if not SaveTerrainGrids then
+			return
+		end
+
+		local cached = TerrainGridCache[instance]
+		if cached ~= nil then
+			return cached or nil
+		end
+
+		local PhysicsGrid = readTerrainGrid(instance, "PhysicsGrid")
+		local SmoothGrid = readTerrainGrid(instance, "SmoothGrid")
+		if PhysicsGrid and SmoothGrid then
+			local tags = '<BinaryString name="PhysicsGrid"><![CDATA['
+				.. to_base64(PhysicsGrid)
+				.. ']]></BinaryString><BinaryString name="SmoothGrid"><![CDATA['
+				.. to_base64(SmoothGrid)
+				.. "]]></BinaryString>"
+			TerrainGridCache[instance] = tags
+			return tags
+		end
+
+		TerrainGridCache[instance] = false
 	end
 
 	local CHUNK_LIMIT = 200 * 1024 * 1024 -- string length overflow prevention
@@ -2949,40 +2983,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		if final or status_interval <= now - last_save_cache_render then
 			last_save_cache_render = now
 			wait_for_render()
-		end
-	end
-
-	local TERRAIN_GRID_ENCODE_CHUNK_SIZE = 3 * 1024 * 1024
-	local function appendTerrainGridTags(instance)
-		if not SaveTerrainGrids then
-			return
-		end
-
-		for _, propertyName in { "PhysicsGrid", "SmoothGrid" } do
-			local raw = readTerrainGrid(instance, propertyName)
-			if type(raw) ~= "string" or raw == "" then
-				continue
-			end
-
-			savebuffer[savebuffer_size] = '<BinaryString name="' .. propertyName .. '"><![CDATA['
-			savebuffer_size += 1
-
-			for offset = 1, #raw, TERRAIN_GRID_ENCODE_CHUNK_SIZE do
-				local chunk = string.sub(raw, offset, offset + TERRAIN_GRID_ENCODE_CHUNK_SIZE - 1)
-				savebuffer[savebuffer_size] = to_base64(chunk)
-				savebuffer_size += 1
-
-				if offset ~= 1 then
-					save_cache()
-				else
-					task.wait()
-				end
-			end
-
-			savebuffer[savebuffer_size] = "]]></BinaryString>"
-			savebuffer_size += 1
-			raw = nil
-			save_cache()
 		end
 	end
 
@@ -3093,9 +3093,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				-- local Properties =
 				savebuffer[savebuffer_size] = ReturnItem(ClassTagOverride or ClassName, instance) -- TODO: Ideally this shouldn't return <Properties> as well as the line below to close it IF  IgnorePropertiesOfNotScriptsOnScriptsMode is ENABLED
 				savebuffer_size += 1
-				if ClassName == "Terrain" then
-					appendTerrainGridTags(instance)
-				end
 				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSourceContainer(instance)) then
 					local default_instance, new_def_inst
 					local isMeshPart = instance:IsA("MeshPart")
@@ -3475,7 +3472,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 
 	local function buildTerrainRestoreScript()
-		if not SaveTerrainVoxels or SaveTerrainGrids then
+		if not SaveTerrainVoxels then
 			return
 		end
 
