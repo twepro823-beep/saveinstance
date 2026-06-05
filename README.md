@@ -12,8 +12,6 @@ local SaveinstanceOptions = {
     IgnoreSpecialProperties = true,
     IgnoreSharedStrings = true,
     SaveTerrainGrids = false,
-    SaveTerrainVoxels = true,
-    TerrainVoxelChunkSize = 32,
     TreatUnreadableUnionsAsParts = true,
     TreatUnionsAsParts = true,
     ReadMe = true,
@@ -44,8 +42,6 @@ synsaveinstance({
     IgnoreSpecialProperties = true,
     IgnoreSharedStrings = true,
     SaveTerrainGrids = false,
-    SaveTerrainVoxels = true,
-    TerrainVoxelChunkSize = 32,
     TreatUnionsAsParts = true,
     AlternativeWritefile = true,
     LowMemory = true,
@@ -59,14 +55,11 @@ Then enable one feature at a time:
 1. Change `mode` from `"scripts"` to `"optimized"`.
 2. Change `noscripts` to `false`.
 3. Change `TreatUnionsAsParts` to `false`.
-4. Change `TerrainVoxelChunkSize` to `48` or `64` if terrain works and you want faster saving.
-5. Change `SaveTerrainGrids` to `true`.
-6. Change `IgnoreSharedStrings` to `false`.
-7. Change `IgnoreSpecialProperties` to `false`.
+4. Change `SaveTerrainGrids` to `true`.
+5. Change `IgnoreSharedStrings` to `false`.
+6. Change `IgnoreSpecialProperties` to `false`.
 
 The last option changed before Roblox closes is the crash source for your executor/game combination.
-
-When `SaveTerrainVoxels = true`, the saved file will include a `Restore Terrain Voxels` Script. In Studio, move that Script to `ServerScriptService`, run the place once, then save the place again to bake the terrain.
 
 # manual version
 

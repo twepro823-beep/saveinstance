@@ -1774,9 +1774,6 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
 --- @field SaveTerrainGrids boolean -- Saves Terrain PhysicsGrid and SmoothGrid. Disable this if saving Terrain closes Roblox. ___Default:___ true, false on known crashing executors
---- @field SaveTerrainVoxels boolean -- Saves Terrain with a chunked ReadVoxels/WriteVoxels restore script when Terrain grids are disabled. ___Default:___ true on known crashing executors
---- @field TerrainVoxelChunkSize number -- Terrain voxel chunk size used by SaveTerrainVoxels. Smaller is safer, larger is faster. ___Default:___ 32
---- @field TerrainOccupancyScale number -- Quantization scale for saved terrain occupancy. Higher is more precise and larger. ___Default:___ 255
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
 --- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read into Parts. This avoids corrupted-looking unions but still loses the real union shape. ___Default:___ false
 
@@ -1920,9 +1917,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
 		SaveTerrainGrids = not ArrayToDict({ "Madium" })[EXECUTOR_NAME],
-		SaveTerrainVoxels = ArrayToDict({ "Madium" })[EXECUTOR_NAME] or false,
-		TerrainVoxelChunkSize = 32,
-		TerrainOccupancyScale = 255,
 		TreatUnionsAsParts = false,
 		TreatUnreadableUnionsAsParts = false,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],
@@ -2141,9 +2135,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local IgnoreSharedStrings = OPTIONS.IgnoreSharedStrings
 	local SharedStringOverwrite = OPTIONS.SharedStringOverwrite
 	local SaveTerrainGrids = OPTIONS.SaveTerrainGrids
-	local SaveTerrainVoxels = OPTIONS.SaveTerrainVoxels
-	local TerrainVoxelChunkSize = OPTIONS.TerrainVoxelChunkSize
-	local TerrainOccupancyScale = OPTIONS.TerrainOccupancyScale
 	local ScriptSourceHeader = OPTIONS.ScriptSourceHeader
 	local LinkedSourceComment = OPTIONS.LinkedSourceComment
 
@@ -3471,194 +3462,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		savebuffer_size += 1
 	end
 
-	local function buildTerrainRestoreScript()
-		if not SaveTerrainVoxels then
-			return
-		end
-
-		local terrain = workspace:FindFirstChildOfClass("Terrain")
-		if not terrain then
-			return
-		end
-
-		local okExtents, extents = pcall(function()
-			return terrain.MaxExtents
-		end)
-		if not okExtents or not extents then
-			return
-		end
-
-		local min, max = extents.Min, extents.Max
-		if max.X <= min.X or max.Y <= min.Y or max.Z <= min.Z then
-			return
-		end
-
-		local chunkSize = type(TerrainVoxelChunkSize) == "number" and math.floor(TerrainVoxelChunkSize) or 32
-		if chunkSize < 8 then
-			chunkSize = 8
-		elseif 64 < chunkSize then
-			chunkSize = 64
-		end
-
-		local occupancyScale = type(TerrainOccupancyScale) == "number" and math.floor(TerrainOccupancyScale) or 255
-		if occupancyScale < 1 then
-			occupancyScale = 255
-		end
-
-		local chunks, chunksSize = {}, 1
-		local chunkCount, filledCellCount, scannedChunkCount = 0, 0, 0
-
-		local function addRun(runs, runsSize, count, material, occupancy)
-			if count ~= 0 then
-				runs[runsSize] = "{" .. count .. "," .. material .. "," .. occupancy .. "}"
-				return runsSize + 1
-			end
-			return runsSize
-		end
-
-		for x = min.X, max.X - 1, chunkSize do
-			local x2 = math.min(x + chunkSize, max.X)
-			for y = min.Y, max.Y - 1, chunkSize do
-				local y2 = math.min(y + chunkSize, max.Y)
-				for z = min.Z, max.Z - 1, chunkSize do
-					scannedChunkCount += 1
-					local z2 = math.min(z + chunkSize, max.Z)
-					local region = Region3.new(Vector3.new(x, y, z) * 4, Vector3.new(x2, y2, z2) * 4):ExpandToGrid(4)
-					local ok, materials, occupancies = pcall(terrain.ReadVoxels, terrain, region, 4)
-					if ok and materials and occupancies then
-						local size = materials.Size
-						local runs, runsSize = {}, 1
-						local lastMaterial, lastOccupancy, runLength, hasFilled = nil, nil, 0, false
-
-						for ix = 1, size.X do
-							local materialsX, occupanciesX = materials[ix], occupancies[ix]
-							for iy = 1, size.Y do
-								local materialsY, occupanciesY = materialsX[iy], occupanciesX[iy]
-								for iz = 1, size.Z do
-									local material = materialsY[iz]
-									local occupancy = math.floor((occupanciesY[iz] or 0) * occupancyScale + 0.5)
-									local materialValue = material.Value
-
-									if material ~= Enum.Material.Air and occupancy ~= 0 then
-										hasFilled = true
-										filledCellCount += 1
-									end
-
-									if materialValue == lastMaterial and occupancy == lastOccupancy then
-										runLength += 1
-									else
-										runsSize = addRun(runs, runsSize, runLength, lastMaterial, lastOccupancy)
-										lastMaterial, lastOccupancy, runLength = materialValue, occupancy, 1
-									end
-								end
-							end
-						end
-
-						runsSize = addRun(runs, runsSize, runLength, lastMaterial, lastOccupancy)
-
-						if hasFilled then
-							chunks[chunksSize] = "{"
-								.. x
-								.. ","
-								.. y
-								.. ","
-								.. z
-								.. ","
-								.. size.X
-								.. ","
-								.. size.Y
-								.. ","
-								.. size.Z
-								.. ",{"
-								.. table.concat(runs, ",")
-								.. "}}"
-							chunksSize += 1
-							chunkCount += 1
-						end
-					elseif __DEBUG_MODE then
-						__DEBUG_MODE("Terrain ReadVoxels Failed", tostring(region), tostring(materials))
-					end
-
-					if scannedChunkCount % 8 == 0 then
-						save_cache()
-					else
-						task.wait()
-					end
-				end
-			end
-		end
-
-		if chunkCount == 0 then
-			return
-		end
-
-		local data = "local data={scale="
-			.. occupancyScale
-			.. ",chunks={"
-			.. table.concat(chunks, ",")
-			.. "}}\n"
-
-		return "--[[\n"
-			.. "Chunked Terrain restore data generated by saveinstance.\n"
-			.. "Move this Script to ServerScriptService in Studio, run the place once, then save the file again.\n"
-			.. "Chunks: "
-			.. chunkCount
-			.. "; filled cells: "
-			.. filledCellCount
-			.. "\n"
-			.. "]]\n"
-			.. data
-			.. [[
-local terrain = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
-local materialByValue = {}
-for _, material in ipairs(Enum.Material:GetEnumItems()) do
-	materialByValue[material.Value] = material
-end
-
-local function blank3(sizeX, sizeY, sizeZ)
-	local materials, occupancies = { Size = Vector3.new(sizeX, sizeY, sizeZ) }, { Size = Vector3.new(sizeX, sizeY, sizeZ) }
-	for x = 1, sizeX do
-		local mx, ox = {}, {}
-		materials[x], occupancies[x] = mx, ox
-		for y = 1, sizeY do
-			local my, oy = {}, {}
-			mx[y], ox[y] = my, oy
-			for z = 1, sizeZ do
-				my[z], oy[z] = Enum.Material.Air, 0
-			end
-		end
-	end
-	return materials, occupancies
-end
-
-for chunkIndex, chunk in ipairs(data.chunks) do
-	local startX, startY, startZ, sizeX, sizeY, sizeZ, runs = chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]
-	local materials, occupancies = blank3(sizeX, sizeY, sizeZ)
-	local cursor = 0
-	for _, run in ipairs(runs) do
-		local count, materialValue, occupancyValue = run[1], run[2], run[3]
-		local material = materialByValue[materialValue] or Enum.Material.Air
-		local occupancy = occupancyValue / data.scale
-		for _ = 1, count do
-			cursor += 1
-			local z = ((cursor - 1) % sizeZ) + 1
-			local y = (math.floor((cursor - 1) / sizeZ) % sizeY) + 1
-			local x = math.floor((cursor - 1) / (sizeY * sizeZ)) + 1
-			materials[x][y][z] = material
-			occupancies[x][y][z] = occupancy
-		end
-	end
-	local region = Region3.new(Vector3.new(startX, startY, startZ) * 4, Vector3.new(startX + sizeX, startY + sizeY, startZ + sizeZ) * 4):ExpandToGrid(4)
-	terrain:WriteVoxels(region, 4, materials, occupancies)
-	if chunkIndex % 4 == 0 then
-		task.wait()
-	end
-end
-
-print(("[saveinstance] Restored %d terrain chunks"):format(#data.chunks))
-]]
-	end
-
 	local function save_game()
 		do
 			if IsModel then
@@ -3680,13 +3483,6 @@ print(("[saveinstance] Restored %d terrain chunks"):format(#data.chunks))
 			or NilInstances and global_container.getnilinstances -- ! Make sure this accurately reflects everything below
 
 		save_hierarchy(ToSaveList)
-
-		do
-			local terrainRestoreSource = buildTerrainRestoreScript()
-			if terrainRestoreSource then
-				save_extra("Restore Terrain Voxels", nil, "Script", terrainRestoreSource)
-			end
-		end
 
 		if IsolateLocalPlayer or IsolateLocalPlayerCharacter then
 			local LocalPlayer = service.Players.LocalPlayer
