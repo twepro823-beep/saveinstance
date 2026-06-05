@@ -1773,6 +1773,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreDefaultPlayerScripts boolean -- * **RISKY: Ignores Default PlayerScripts like PlayerModule & RbxCharacterSounds. Prevents crashes on certain Executors. ___Default:___ true
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
+--- @field SaveTerrainGrids boolean -- Saves Terrain PhysicsGrid and SmoothGrid. Disable this if saving Terrain closes Roblox. ___Default:___ true, false on known crashing executors
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
 --- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read into Parts. This avoids corrupted-looking unions but still loses the real union shape. ___Default:___ false
 
@@ -1915,6 +1916,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
+		SaveTerrainGrids = not ArrayToDict({ "Madium" })[EXECUTOR_NAME],
 		TreatUnionsAsParts = false,
 		TreatUnreadableUnionsAsParts = false,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],
@@ -2132,6 +2134,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local IgnoreSharedStrings = OPTIONS.IgnoreSharedStrings
 	local SharedStringOverwrite = OPTIONS.SharedStringOverwrite
+	local SaveTerrainGrids = OPTIONS.SaveTerrainGrids
 	local ScriptSourceHeader = OPTIONS.ScriptSourceHeader
 	local LinkedSourceComment = OPTIONS.LinkedSourceComment
 
@@ -2889,6 +2892,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 
 	function getTerrainGridTags(instance)
+		if not SaveTerrainGrids then
+			return
+		end
+
 		local cached = TerrainGridCache[instance]
 		if cached ~= nil then
 			return cached or nil

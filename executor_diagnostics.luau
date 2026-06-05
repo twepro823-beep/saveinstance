@@ -196,6 +196,7 @@ end
 local recommended = {
 	IgnoreSpecialProperties = true,
 	IgnoreSharedStrings = true,
+	SaveTerrainGrids = false,
 	TreatUnreadableUnionsAsParts = true,
 	TreatUnionsAsParts = true,
 	AlternativeWritefile = appendfileFn ~= nil,

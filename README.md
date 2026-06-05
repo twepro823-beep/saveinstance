@@ -11,6 +11,7 @@ local SaveinstanceOptions = {
     -- Safer crash-avoidance defaults. Disable these only after a successful test save.
     IgnoreSpecialProperties = true,
     IgnoreSharedStrings = true,
+    SaveTerrainGrids = false,
     TreatUnreadableUnionsAsParts = true,
     TreatUnionsAsParts = true,
     ReadMe = true,
@@ -40,6 +41,7 @@ synsaveinstance({
     noscripts = true,
     IgnoreSpecialProperties = true,
     IgnoreSharedStrings = true,
+    SaveTerrainGrids = false,
     TreatUnionsAsParts = true,
     AlternativeWritefile = true,
     LowMemory = true,
@@ -53,8 +55,9 @@ Then enable one feature at a time:
 1. Change `mode` from `"scripts"` to `"optimized"`.
 2. Change `noscripts` to `false`.
 3. Change `TreatUnionsAsParts` to `false`.
-4. Change `IgnoreSharedStrings` to `false`.
-5. Change `IgnoreSpecialProperties` to `false`.
+4. Change `SaveTerrainGrids` to `true`.
+5. Change `IgnoreSharedStrings` to `false`.
+6. Change `IgnoreSpecialProperties` to `false`.
 
 The last option changed before Roblox closes is the crash source for your executor/game combination.
 
