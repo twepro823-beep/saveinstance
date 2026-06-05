@@ -10,8 +10,9 @@ local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.c
 local SaveinstanceOptions = {
     TreatUnionsAsParts = false,
     TreatUnreadableUnionsAsParts = false,
-    IgnoreSpecialProperties = false,
-    IgnoreSharedStrings = false,
+    IgnoreSpecialProperties = true,
+    IgnoreSharedStrings = true,
+    SaveTerrainGrids = false,
     ReadMe = true,
     ScriptSourceHeader = false,
     LinkedSourceComment = false,
@@ -70,6 +71,8 @@ terrain_region_export_progress.txt
 For Roblox Studio, install `studio_terrain_region_importer.plugin.luau` as a local plugin. Then open your place, click `Plugins -> Terrain Importer -> Import TerrainRegion`, and select `TerrainRegion.rbxmx`.
 
 The plugin uses `SerializationService:DeserializeInstancesAsync()` to load the `TerrainRegion`, then `workspace.Terrain:PasteRegion()` to write it into the map. The two raw `.bin` files are saved as backup/debug data; Studio plugins cannot directly set `Terrain.PhysicsGrid` or `Terrain.SmoothGrid` because those properties are hidden and not scriptable.
+
+If you want the main saveinstance file itself to try saving Terrain grids, pass `SaveTerrainGrids = true` manually.
 
 # 💖 Support Their & Their Work
 
