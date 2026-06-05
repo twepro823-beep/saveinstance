@@ -197,10 +197,10 @@ local recommended = {
 	IgnoreSpecialProperties = true,
 	IgnoreSharedStrings = true,
 	TreatUnreadableUnionsAsParts = true,
-	TreatUnionsAsParts = false,
+	TreatUnionsAsParts = true,
 	AlternativeWritefile = appendfileFn ~= nil,
 	LowMemory = true,
-	noscripts = not (decompileFn or getscriptbytecodeFn),
+	noscripts = not RUN_RISKY_TESTS or not (decompileFn or getscriptbytecodeFn),
 }
 
 if not writefileFn then

@@ -134,18 +134,8 @@ do -- * Load Region of Déjà Vu
 		return UGCValidationService:GetPropertyValue(instance, propertyName) -- TODO Sadly there's no way to tell whether value is actually nil or the function just couldn't read it (always returns nil for "Class" category properties)
 		-- TODO `category ~= "Class"` causes WeldConstraint Part1Internal to be read as nil and not get unfiltered. Currently, there are no properties of category "Class" that match the following: NotScriptable, can be read with gethiddenproperty_fallback accurately (it always outputs nil for "Class" category, making that check useless anyway) & don't have a NotScriptableFix.
 	end
-	if gethiddenproperty then
-		local o, r = pcall(gethiddenproperty, workspace, "StreamOutBehavior")
-		if not o or r ~= nil and typeof(r) ~= "EnumItem" then -- * Tests if gethiddenproperty is broken
-			gethiddenproperty = nil
-		else
-			o, r = pcall(gethiddenproperty, Instance.new("AnimationRigData", Instance.new("Folder")), "parent") -- * Tests how it reacts to property overlap (shadowing) due to AnimationRigData.parent; expected BinaryString
-
-			if o and r ~= nil and type(r) ~= "string" then
-				gethiddenproperty = nil
-			end
-		end
-	end
+	-- Avoid probing gethiddenproperty during load. On some executors this native
+	-- call can close Roblox before IgnoreSpecialProperties has a chance to run.
 	local function benchmark(f1, f2, ...)
 		local ranking = table.create(2)
 		for i, f in { f1, f2 } do
@@ -1893,7 +1883,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IgnoreDefaultProperties = true,
 		IgnoreNotArchivable = true,
 		IgnorePropertiesOfNotScriptsOnScriptsMode = false,
-		IgnoreSpecialProperties = ArrayToDict({ "Fluxus", "Delta", "Solara" })[EXECUTOR_NAME] or false, -- ! Please submit more Executors that crash on gethiddenproperty (with this disabled basically)
+		IgnoreSpecialProperties = ArrayToDict({ "Fluxus", "Delta", "Solara", "Madium" })[EXECUTOR_NAME] or false, -- ! Please submit more Executors that crash on gethiddenproperty (with this disabled basically)
 
 		IsolateLocalPlayer = false, --  #service.StarterGui:GetChildren() == 0
 		IsolateLocalPlayerCharacter = false,
