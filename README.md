@@ -8,16 +8,55 @@ all credits to USSI, i only did some changes
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")();
 local SaveinstanceOptions = {
+    -- Safer crash-avoidance defaults. Disable these only after a successful test save.
+    IgnoreSpecialProperties = true,
+    IgnoreSharedStrings = true,
+    TreatUnreadableUnionsAsParts = true,
     TreatUnionsAsParts = false,
-    TreatUnreadableUnionsAsParts = false,
-    IgnoreSpecialProperties = false,
-    IgnoreSharedStrings = false,
     ReadMe = true,
     ScriptSourceHeader = false,
     LinkedSourceComment = false,
 }
 synsaveinstance(SaveinstanceOptions);
 ```
+
+# Debug crash
+
+If Roblox closes instead of showing an error in F9, the crash is probably native inside the executor or Roblox while reading hidden properties, SharedStrings, union geometry, decompiling, or writing a huge file.
+
+Run the executor diagnostics first:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/executor_diagnostics.luau", true), "executor_diagnostics")()
+```
+
+Start with this minimal run:
+
+```lua
+local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")()
+
+synsaveinstance({
+    mode = "scripts",
+    noscripts = true,
+    IgnoreSpecialProperties = true,
+    IgnoreSharedStrings = true,
+    TreatUnionsAsParts = true,
+    AlternativeWritefile = true,
+    LowMemory = true,
+    timeout = 1,
+    __DEBUG_MODE = true,
+})
+```
+
+Then enable one feature at a time:
+
+1. Change `mode` from `"scripts"` to `"optimized"`.
+2. Change `noscripts` to `false`.
+3. Change `TreatUnionsAsParts` to `false`.
+4. Change `IgnoreSharedStrings` to `false`.
+5. Change `IgnoreSpecialProperties` to `false`.
+
+The last option changed before Roblox closes is the crash source for your executor/game combination.
 
 # manual version
 
