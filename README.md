@@ -68,24 +68,6 @@ The last option changed before Roblox closes is the crash source for your execut
 
 When `SaveTerrainVoxels = true`, the saved file will include a `Restore Terrain Voxels` Script. In Studio, move that Script to `ServerScriptService`, run the place once, then save the place again to bake the terrain.
 
-# Exact terrain grid dump
-
-If your executor can safely read Terrain internals, this dumps the exact `SmoothGrid` and `PhysicsGrid` strings to files:
-
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/terrain_grid_dump.luau", true), "terrain_grid_dump")()
-```
-
-It writes:
-
-```text
-SmoothGrid.bin
-PhysicsGrid.bin
-terrain_grid_dump_progress.txt
-```
-
-If Roblox closes, open `terrain_grid_dump_progress.txt` after relaunching. The last line tells which grid was being read. A crash during `gethiddenproperty(workspace.Terrain, "...Grid")` is native executor/client behavior and cannot be caught by Lua.
-
 # manual version
 
 ```lua
