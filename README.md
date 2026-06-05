@@ -19,6 +19,31 @@ local SaveinstanceOptions = {
 synsaveinstance(SaveinstanceOptions);
 ```
 
+# Decompile prepass
+
+This preloads script decompilation through an external API before running saveinstance. It sends readable client bytecode to `https://api.lua.expert/decompile`.
+
+```lua
+local saveWithPrepass = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/decompile_prepass.luau", true), "decompile_prepass")()
+
+saveWithPrepass({
+    IgnoreSpecialProperties = true,
+    IgnoreSharedStrings = true,
+}, {
+    MaxInFlight = 30,
+    RequestsPerMinute = 1400,
+    RequestTimeout = 20,
+})
+```
+
+To only warm the decompile cache without saving:
+
+```lua
+saveWithPrepass(nil, {
+    SkipSaveInstance = true,
+})
+```
+
 # manual version
 
 ```lua
