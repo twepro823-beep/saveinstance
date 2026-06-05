@@ -86,6 +86,24 @@ terrain_grid_dump_progress.txt
 
 If Roblox closes, open `terrain_grid_dump_progress.txt` after relaunching. The last line tells which grid was being read. A crash during `gethiddenproperty(workspace.Terrain, "...Grid")` is native executor/client behavior and cannot be caught by Lua.
 
+If the exact grid dump works, use exact Terrain mode in saveinstance:
+
+```lua
+local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")()
+
+synsaveinstance({
+    IgnoreSpecialProperties = true,
+    IgnoreSharedStrings = true,
+    SaveTerrainGrids = true,
+    SaveTerrainVoxels = false,
+    TreatUnreadableUnionsAsParts = true,
+    AlternativeWritefile = true,
+    LowMemory = true,
+})
+```
+
+This writes `PhysicsGrid` and `SmoothGrid` into the `.rbxlx` in smaller base64 chunks to reduce memory spikes.
+
 # manual version
 
 ```lua
