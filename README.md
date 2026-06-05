@@ -25,6 +25,27 @@ synsaveinstance(SaveinstanceOptions);
 https://www.youtube.com/watch?v=ZDZdmhqLLeM&t=6s
 ```
 
+# Export and restore Terrain in Studio
+
+Run this in the executor:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/terrain_region_export.luau", true), "terrain_region_export")()
+```
+
+It writes:
+
+```text
+SmoothGrid.bin
+PhysicsGrid.bin
+TerrainRegion.rbxmx
+terrain_region_export_progress.txt
+```
+
+For Roblox Studio, install `studio_terrain_region_importer.plugin.luau` as a local plugin. Then open your place, click `Plugins -> Terrain Importer -> Import TerrainRegion`, and select `TerrainRegion.rbxmx`.
+
+The plugin uses `SerializationService:DeserializeInstancesAsync()` to load the `TerrainRegion`, then `workspace.Terrain:PasteRegion()` to write it into the map. The two raw `.bin` files are saved as backup/debug data; Studio plugins cannot directly set `Terrain.PhysicsGrid` or `Terrain.SmoothGrid` because those properties are hidden and not scriptable.
+
 # 💖 Support Their & Their Work
 
 <a href='https://ko-fi.com/M4M1JNH5G' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi2.png?v=3' border='0' alt='Buy Me a Coffee at ko-fi.com' title='KO-FI' /></a>
