@@ -98,13 +98,22 @@ assert(region and region:IsA("TerrainRegion"), "CopyRegion did not return Terrai
 
 log("reading TerrainRegion hidden data")
 local regionSmoothGrid = gethiddenproperty(region, "SmoothGrid")
-local regionGridV3 = gethiddenproperty(region, "GridV3")
+local okGridV3, regionGridV3 = pcall(gethiddenproperty, region, "GridV3")
+if not okGridV3 then
+	regionGridV3 = nil
+end
 local extentsMin = gethiddenproperty(region, "ExtentsMin")
 local extentsMax = gethiddenproperty(region, "ExtentsMax")
 
 assert(type(regionSmoothGrid) == "string", "TerrainRegion SmoothGrid did not return string")
-assert(typeof(extentsMin) == "Vector3int16", "TerrainRegion ExtentsMin did not return Vector3int16")
-assert(typeof(extentsMax) == "Vector3int16", "TerrainRegion ExtentsMax did not return Vector3int16")
+if typeof(extentsMin) ~= "Vector3int16" or typeof(extentsMax) ~= "Vector3int16" then
+	log("TerrainRegion extents unavailable; using Terrain MaxExtents fallback")
+	extentsMin = maxExtents.Min
+	extentsMax = maxExtents.Max
+end
+
+assert(typeof(extentsMin) == "Vector3int16", "ExtentsMin fallback did not return Vector3int16")
+assert(typeof(extentsMax) == "Vector3int16", "ExtentsMax fallback did not return Vector3int16")
 
 log("writing TerrainRegion.rbxmx")
 writefile(
