@@ -2121,7 +2121,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local IgnorePropertiesOfNotScriptsOnScriptsMode = OPTIONS.IgnorePropertiesOfNotScriptsOnScriptsMode
 
 	local old_gethiddenproperty
-	local terrain_gethiddenproperty = gethiddenproperty
 	if OPTIONS.IgnoreSpecialProperties and gethiddenproperty then
 		old_gethiddenproperty = gethiddenproperty
 		gethiddenproperty = nil
@@ -2879,8 +2878,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local function readTerrainGrid(instance, propertyName)
 		local ok, value
-		if terrain_gethiddenproperty then
-			ok, value = pcall(terrain_gethiddenproperty, instance, propertyName)
+		if gethiddenproperty then
+			ok, value = pcall(gethiddenproperty, instance, propertyName)
 			if ok and type(value) == "string" then
 				return value
 			end
@@ -2962,9 +2961,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		for _, propertyName in { "PhysicsGrid", "SmoothGrid" } do
 			local raw = readTerrainGrid(instance, propertyName)
 			if type(raw) ~= "string" or raw == "" then
-				if __DEBUG_MODE then
-					__DEBUG_MODE("Terrain Grid Missing", propertyName)
-				end
 				continue
 			end
 

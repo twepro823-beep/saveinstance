@@ -99,7 +99,6 @@ synsaveinstance({
     TreatUnreadableUnionsAsParts = true,
     AlternativeWritefile = true,
     LowMemory = true,
-    __DEBUG_MODE = true,
 })
 ```
 
