@@ -62,13 +62,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/savein
 It writes:
 
 ```text
-SmoothGrid.bin
-PhysicsGrid.bin
-TerrainRegion.rbxmx
-terrain_region_export_progress.txt
+<placeId> <placeName> SmoothGrid.bin
+<placeId> <placeName> PhysicsGrid.bin
+<placeId> <placeName> TerrainRegion.rbxmx
+<placeId> <placeName> terrain_region_export_progress.txt
 ```
 
-For Roblox Studio, install `studio_terrain_region_importer.plugin.luau` as a local plugin. Then open your place, click `Plugins -> Terrain Importer -> Import TerrainRegion`, and select `TerrainRegion.rbxmx`.
+For Roblox Studio, install `studio_terrain_region_importer.plugin.luau` as a local plugin. Then open your place, click `Plugins -> Terrain Importer -> Import TerrainRegion`, and select the file ending with `TerrainRegion.rbxmx`.
 
 The plugin uses `SerializationService:DeserializeInstancesAsync()` to load the `TerrainRegion`, then `workspace.Terrain:PasteRegion()` to write it into the map. The two raw `.bin` files are saved as backup/debug data; Studio plugins cannot directly set `Terrain.PhysicsGrid` or `Terrain.SmoothGrid` because those properties are hidden and not scriptable.
 

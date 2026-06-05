@@ -1,12 +1,11 @@
 -- Exports exact Terrain data for Roblox Studio restoration.
 -- Outputs:
---   SmoothGrid.bin
---   PhysicsGrid.bin
---   TerrainRegion.rbxmx
+--   <placeId> <placeName> SmoothGrid.bin
+--   <placeId> <placeName> PhysicsGrid.bin
+--   <placeId> <placeName> TerrainRegion.rbxmx
 
 local RAW_CHUNK_SIZE = 4 * 1024 * 1024
 local B64_CHUNK_SIZE = 3 * 1024 * 1024
-local PROGRESS_FILE = "terrain_region_export_progress.txt"
 
 local b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local b64chars = table.create(64)
@@ -22,6 +21,29 @@ end
 local writefile = requireFunction("writefile", writefile)
 local appendfile = requireFunction("appendfile", appendfile)
 local gethiddenproperty = requireFunction("gethiddenproperty", gethiddenproperty)
+
+local function sanitizeFileName(str)
+	return string.sub(string.gsub(string.gsub(string.gsub(str, "[^%w _%-]", ""), " +", " "), " +$", ""), 1, 180)
+end
+
+local placeId = tostring(game.PlaceId)
+local placeName = game.Name
+pcall(function()
+	local info = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+	if type(info) == "table" and type(info.Name) == "string" and info.Name ~= "" then
+		placeName = info.Name
+	end
+end)
+
+local filePrefix = sanitizeFileName(placeId .. " " .. placeName)
+if filePrefix == "" then
+	filePrefix = placeId
+end
+
+local SMOOTH_GRID_FILE = filePrefix .. " SmoothGrid.bin"
+local PHYSICS_GRID_FILE = filePrefix .. " PhysicsGrid.bin"
+local TERRAIN_REGION_FILE = filePrefix .. " TerrainRegion.rbxmx"
+local PROGRESS_FILE = filePrefix .. " terrain_region_export_progress.txt"
 
 local function log(message)
 	print("[terrain export] " .. message)
@@ -81,12 +103,12 @@ local terrain = workspace.Terrain
 log("reading Terrain SmoothGrid")
 local terrainSmoothGrid = gethiddenproperty(terrain, "SmoothGrid")
 assert(type(terrainSmoothGrid) == "string", "Terrain SmoothGrid did not return string")
-appendRaw("SmoothGrid.bin", terrainSmoothGrid)
+appendRaw(SMOOTH_GRID_FILE, terrainSmoothGrid)
 
 log("reading Terrain PhysicsGrid")
 local terrainPhysicsGrid = gethiddenproperty(terrain, "PhysicsGrid")
 assert(type(terrainPhysicsGrid) == "string", "Terrain PhysicsGrid did not return string")
-appendRaw("PhysicsGrid.bin", terrainPhysicsGrid)
+appendRaw(PHYSICS_GRID_FILE, terrainPhysicsGrid)
 
 log("reading Terrain MaxExtents")
 local maxExtents = gethiddenproperty(terrain, "MaxExtents")
@@ -115,23 +137,32 @@ end
 assert(typeof(extentsMin) == "Vector3int16", "ExtentsMin fallback did not return Vector3int16")
 assert(typeof(extentsMax) == "Vector3int16", "ExtentsMax fallback did not return Vector3int16")
 
-log("writing TerrainRegion.rbxmx")
+log("writing " .. TERRAIN_REGION_FILE)
 writefile(
-	"TerrainRegion.rbxmx",
+	TERRAIN_REGION_FILE,
 	'<roblox version="4"><Item class="TerrainRegion" referent="RBX0"><Properties>'
-		.. '<string name="Name">ImportedTerrainRegion</string>'
+		.. '<string name="Name">'
+		.. filePrefix
+		.. " TerrainRegion"
+		.. "</string>"
 		.. vector3int16Tag("ExtentsMin", extentsMin)
 		.. vector3int16Tag("ExtentsMax", extentsMax)
 )
 
-appendBase64Property("TerrainRegion.rbxmx", "SmoothGrid", regionSmoothGrid)
+appendBase64Property(TERRAIN_REGION_FILE, "SmoothGrid", regionSmoothGrid)
 if type(regionGridV3) == "string" and regionGridV3 ~= "" then
-	appendBase64Property("TerrainRegion.rbxmx", "GridV3", regionGridV3)
+	appendBase64Property(TERRAIN_REGION_FILE, "GridV3", regionGridV3)
 end
-appendfile("TerrainRegion.rbxmx", "</Properties></Item></roblox>")
+appendfile(TERRAIN_REGION_FILE, "</Properties></Item></roblox>")
 
 log(
-	"done; wrote SmoothGrid.bin, PhysicsGrid.bin, TerrainRegion.rbxmx; region cells "
+	"done; wrote "
+		.. SMOOTH_GRID_FILE
+		.. ", "
+		.. PHYSICS_GRID_FILE
+		.. ", "
+		.. TERRAIN_REGION_FILE
+		.. "; region cells "
 		.. tostring(extentsMin)
 		.. " -> "
 		.. tostring(extentsMax)
