@@ -10,9 +10,8 @@ local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.c
 local SaveinstanceOptions = {
     TreatUnionsAsParts = false,
     TreatUnreadableUnionsAsParts = false,
-    IgnoreSpecialProperties = true,
-    IgnoreSharedStrings = true,
-    SaveTerrainGrids = false,
+    IgnoreSpecialProperties = false,
+    IgnoreSharedStrings = false,
     ReadMe = true,
     ScriptSourceHeader = false,
     LinkedSourceComment = false,
@@ -20,59 +19,11 @@ local SaveinstanceOptions = {
 synsaveinstance(SaveinstanceOptions);
 ```
 
-# Decompile prepass
-
-This preloads script decompilation through an external API before running saveinstance. It sends readable client bytecode to `https://api.lua.expert/decompile`.
-
-```lua
-local saveWithPrepass = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/decompile_prepass.luau", true), "decompile_prepass")()
-
-saveWithPrepass({
-    IgnoreSpecialProperties = true,
-    IgnoreSharedStrings = true,
-}, {
-    MaxInFlight = 30,
-    RequestsPerMinute = 1400,
-    RequestTimeout = 20,
-})
-```
-
-To only warm the decompile cache without saving:
-
-```lua
-saveWithPrepass(nil, {
-    SkipSaveInstance = true,
-})
-```
-
 # manual version
 
 ```lua
 https://www.youtube.com/watch?v=ZDZdmhqLLeM&t=6s
 ```
-
-# Export and restore Terrain in Studio
-
-Run this in the executor:
-
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/terrain_region_export.luau", true), "terrain_region_export")()
-```
-
-It writes:
-
-```text
-<placeId> <placeName> SmoothGrid.bin
-<placeId> <placeName> PhysicsGrid.bin
-<placeId> <placeName> TerrainRegion.rbxmx
-<placeId> <placeName> terrain_region_export_progress.txt
-```
-
-For Roblox Studio, install `studio_terrain_region_importer.plugin.luau` as a local plugin. Then open your place, click `Plugins -> Terrain Importer -> Import TerrainRegion`, and select the file ending with `TerrainRegion.rbxmx`.
-
-The plugin uses `SerializationService:DeserializeInstancesAsync()` to load the `TerrainRegion`, then `workspace.Terrain:PasteRegion()` to write it into the map. The two raw `.bin` files are saved as backup/debug data; Studio plugins cannot directly set `Terrain.PhysicsGrid` or `Terrain.SmoothGrid` because those properties are hidden and not scriptable.
-
-If you want the main saveinstance file itself to try saving Terrain grids, pass `SaveTerrainGrids = true` manually.
 
 # 💖 Support Their & Their Work
 
