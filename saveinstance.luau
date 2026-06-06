@@ -773,7 +773,7 @@ XML_Descriptors = {
 		return "<axes>" .. __BIT(raw.X, raw.Y, raw.Z) .. "</axes>"
 	end,
 
-	-- ? Roblox uses CDATA only for these (try to prove this wrong): CollisionGroupData, MaterialColors
+	-- ? Roblox uses CDATA only for these (try to prove this wrong): CollisionGroupData, SmoothGrid, MaterialColors, PhysicsGrid
 	-- ! Assuming all base64 encoded strings won't have newlines
 
 	-- ! 7/7/24
@@ -1314,6 +1314,50 @@ do
 		-- 		error("No Receiver", 2)
 		-- 	end
 		-- end},
+		Terrain = {
+			AcquisitionMethod = "LastUsedModificationMethod", -- ? Not sure
+			MaterialColors = function(instance) -- https://github.com/RobloxAPI/spec/blob/master/properties/MaterialColors.md
+				local TERRAIN_MATERIAL_COLORS =
+					{ --https://github.com/rojo-rbx/rbx-dom/blob/master/rbx_dom_lua/src/customProperties.lua#L5
+						Enum.Material.Grass,
+						Enum.Material.Slate,
+						Enum.Material.Concrete,
+						Enum.Material.Brick,
+						Enum.Material.Sand,
+						Enum.Material.WoodPlanks,
+						Enum.Material.Rock,
+						Enum.Material.Glacier,
+						Enum.Material.Snow,
+						Enum.Material.Sandstone,
+						Enum.Material.Mud,
+						Enum.Material.Basalt,
+						Enum.Material.Ground,
+						Enum.Material.CrackedLava,
+						Enum.Material.Asphalt,
+						Enum.Material.Cobblestone,
+						Enum.Material.Ice,
+						Enum.Material.LeafyGrass,
+						Enum.Material.Salt,
+						Enum.Material.Limestone,
+						Enum.Material.Pavement,
+					}
+
+				local b = buffer.create(69) -- 69 bytes: 6 reserved + 63 for colors (21 materials * 3 components)
+				local offset = 6 -- 6 reserved bytes
+
+				local RGB_components = { "R", "G", "B" }
+
+				for _, material in TERRAIN_MATERIAL_COLORS do
+					local color = instance:GetMaterialColor(material)
+					for _, component in RGB_components do
+						buffer.writeu8(b, offset, math.floor(color[component] * 255)) -- ? math.floor seems unneeded but it makes it faster
+						offset += 1
+					end
+				end
+
+				return buffer.tostring(b)
+			end,
+		},
 		TriangleMeshPart = {
 			FluidFidelityInternal = "FluidFidelity",
 		},
@@ -1739,6 +1783,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreDefaultPlayerScripts boolean -- * **RISKY: Ignores Default PlayerScripts like PlayerModule & RbxCharacterSounds. Prevents crashes on certain Executors. ___Default:___ true
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
+--- @field SaveTerrainGrids boolean -- Saves Terrain PhysicsGrid and SmoothGrid into the generated place file. Disabled by default because it can crash or produce huge memory spikes on some executors. ___Default:___ false
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
 --- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read into Parts. This avoids corrupted-looking unions but still loses the real union shape. ___Default:___ false
 
@@ -1881,6 +1926,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
+		SaveTerrainGrids = false,
 		TreatUnionsAsParts = false,
 		TreatUnreadableUnionsAsParts = false,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],
@@ -2098,6 +2144,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local IgnoreSharedStrings = OPTIONS.IgnoreSharedStrings
 	local SharedStringOverwrite = OPTIONS.SharedStringOverwrite
+	local SaveTerrainGrids = OPTIONS.SaveTerrainGrids
 	local ScriptSourceHeader = OPTIONS.ScriptSourceHeader
 	local LinkedSourceComment = OPTIONS.LinkedSourceComment
 
@@ -2769,9 +2816,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return raw
 	end
 
+	local getTerrainGridTags
 	local function ReturnItem(className, instance)
 		--return '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>' -- TODO: Ideally this shouldn't return <Properties> as well as the line below to close it IF  IgnorePropertiesOfNotScriptsOnScriptsMode is Enabled OR If all properties are default (reduces file size by at least 1.4%)
-		return '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>'
+		local itemstring = '<Item class="' .. className .. '" referent="' .. GetRef(instance) .. '"><Properties>'
+		if className == "Terrain" then
+			local terrainGridTags = getTerrainGridTags(instance)
+			if terrainGridTags then
+				itemstring ..= terrainGridTags
+			end
+		end
+		return itemstring
 	end
 
 	local function ReturnProperty(tag, propertyName, value)
@@ -2828,6 +2883,47 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 		inherited_properties[className] = prop_list
 		return prop_list
+	end
+
+	local TerrainGridCache = setmetatable({}, { __mode = "k" })
+	local function readTerrainGrid(instance, propertyName)
+		local ok, value
+		if gethiddenproperty then
+			ok, value = pcall(gethiddenproperty, instance, propertyName)
+			if ok and type(value) == "string" then
+				return value
+			end
+		end
+
+		ok, value = pcall(gethiddenproperty_fallback, instance, propertyName)
+		if ok and type(value) == "string" then
+			return value
+		end
+	end
+
+	function getTerrainGridTags(instance)
+		if not SaveTerrainGrids then
+			return
+		end
+
+		local cached = TerrainGridCache[instance]
+		if cached ~= nil then
+			return cached or nil
+		end
+
+		local PhysicsGrid = readTerrainGrid(instance, "PhysicsGrid")
+		local SmoothGrid = readTerrainGrid(instance, "SmoothGrid")
+		if PhysicsGrid and SmoothGrid then
+			local tags = '<BinaryString name="PhysicsGrid"><![CDATA['
+				.. to_base64(PhysicsGrid)
+				.. ']]></BinaryString><BinaryString name="SmoothGrid"><![CDATA['
+				.. to_base64(SmoothGrid)
+				.. "]]></BinaryString>"
+			TerrainGridCache[instance] = tags
+			return tags
+		end
+
+		TerrainGridCache[instance] = false
 	end
 
 	local CHUNK_LIMIT = 200 * 1024 * 1024 -- string length overflow prevention
