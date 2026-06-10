@@ -1159,6 +1159,7 @@ local ClassList
 local RequiredSharedStringProperties
 local CriticalTriangleMeshProperties
 local CriticalUnionProperties
+local CriticalUnionMeshProperties
 
 do
 	local ClassPropertyExceptions = {
@@ -1214,6 +1215,11 @@ do
 		"PhysicsData",
 		"SerializedOperationGraph",
 		"AssetId",
+	})
+
+	CriticalUnionMeshProperties = ArrayToDict({
+		"MeshData",
+		"MeshData2",
 	})
 
 	local NotScriptableFixes = { --[[
@@ -1784,7 +1790,9 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
---- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read into Parts. This avoids corrupted-looking unions but still loses the real union shape. ___Default:___ false
+--- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read safely into Parts. This avoids invisible unions on weak executors but loses the real union shape. ___Default:___ true
+--- @field UnionGeometryReadTimeout number -- Maximum seconds spent probing one union's hidden geometry before falling back to a visible Part. Set to -1 to disable the per-union timeout. ___Default:___ 0.25
+--- @field UnionGeometryReadTotalTimeout number -- Maximum total seconds spent probing union hidden geometry during the save before remaining unreadable unions fall back to visible Parts. Set to -1 to disable the total timeout. ___Default:___ 4
 
 --- @interface OptionsAliases
 --- @within SynSaveInstance
@@ -1926,7 +1934,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
 		TreatUnionsAsParts = false,
-		TreatUnreadableUnionsAsParts = false,
+		TreatUnreadableUnionsAsParts = true,
+		UnionGeometryReadTimeout = 0.25,
+		UnionGeometryReadTotalTimeout = 4,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],
 
 		OptionsAliases = { -- You can't really modify these as a user
@@ -2131,6 +2141,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local SaveNotCreatable = OPTIONS.SaveNotCreatable
 	local TreatUnionsAsParts = OPTIONS.TreatUnionsAsParts
 	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
+	local UnionGeometryReadTimeout = tonumber(OPTIONS.UnionGeometryReadTimeout) or 0.25
+	local UnionGeometryReadTotalTimeout = tonumber(OPTIONS.UnionGeometryReadTotalTimeout) or 4
 
 	local DecompileJobless = OPTIONS.DecompileJobless
 	if DecompileJobless then
@@ -2674,6 +2686,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local __BREAK = "__BREAK" .. service.HttpService:GenerateGUID(false)
 	local TriangleMeshReadFailures = {}
 	local UnreadableUnionInstances = {}
+	local UnionGeometryReadCache = setmetatable({}, { __mode = "k" })
+	local UnionGeometryReadStarted = os.clock()
+	local UnionGeometryReadDisabled = false
 
 	local function recordTriangleMeshReadFailure(instance, propertyName)
 		if isCriticalTriangleMeshProperty(instance, propertyName) then
@@ -2691,27 +2706,99 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 	end
 
-	local function canReadUnionGeometry(instance)
-		for propertyName in CriticalUnionProperties do
-			local ok, result = pcall(index, instance, propertyName)
+	local function isCriticalUnionProperty(instance, propertyName)
+		return CriticalUnionProperties[propertyName] and instance:IsA("PartOperation")
+	end
+
+	local function markUnreadableUnion(instance, propertyName)
+		if isCriticalUnionProperty(instance, propertyName or "MeshData2") then
+			UnreadableUnionInstances[instance] = true
+			UnionGeometryReadCache[instance] = false
+		end
+	end
+
+	local function unionGeometryReadTimedOut(instance, propertyName, unionStarted)
+		local now = os.clock()
+		if UnionGeometryReadDisabled then
+			markUnreadableUnion(instance, propertyName)
+			return true
+		end
+		if UnionGeometryReadTotalTimeout >= 0 and now - UnionGeometryReadStarted >= UnionGeometryReadTotalTimeout then
+			UnionGeometryReadDisabled = true
+			markUnreadableUnion(instance, propertyName)
+			return true
+		end
+		if unionStarted and UnionGeometryReadTimeout >= 0 and now - unionStarted >= UnionGeometryReadTimeout then
+			markUnreadableUnion(instance, propertyName)
+			return true
+		end
+		return false
+	end
+
+	local function readCriticalUnionProperty(instance, propertyName, reader, unionStarted)
+		if unionGeometryReadTimedOut(instance, propertyName, unionStarted) then
+			return false
+		end
+
+		local ok, result
+		if reader == index or UnionGeometryReadTimeout < 0 and UnionGeometryReadTotalTimeout < 0 then
+			ok, result = pcall(reader, instance, propertyName)
+		else
+			local finished = false
+			task.spawn(function()
+				ok, result = pcall(reader, instance, propertyName)
+				finished = true
+			end)
+
+			while not finished and not unionGeometryReadTimedOut(instance, propertyName, unionStarted) do
+				task.wait()
+			end
+
+			if not finished then
+				return false
+			end
+		end
+
+		if unionGeometryReadTimedOut(instance, propertyName, unionStarted) then
 			if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+				return ok, result
+			end
+			return false
+		end
+
+		return ok, result
+	end
+
+	local function canReadUnionGeometry(instance)
+		local cached = UnionGeometryReadCache[instance]
+		if cached ~= nil then
+			return cached
+		end
+
+		local unionStarted = os.clock()
+		for propertyName in CriticalUnionMeshProperties do
+			local ok, result = readCriticalUnionProperty(instance, propertyName, index, unionStarted)
+			if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+				UnionGeometryReadCache[instance] = true
 				return true
 			end
 
 			if gethiddenproperty then
-				ok, result = pcall(gethiddenproperty, instance, propertyName)
+				ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty, unionStarted)
 				if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+					UnionGeometryReadCache[instance] = true
 					return true
 				end
 			end
 
-			ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
+			ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty_fallback, unionStarted)
 			if ok and result ~= nil and result ~= "" and result ~= "can't get value" then
+				UnionGeometryReadCache[instance] = true
 				return true
 			end
 		end
 
-		UnreadableUnionInstances[instance] = true
+		markUnreadableUnion(instance, "MeshData2")
 		return false
 	end
 
@@ -2724,7 +2811,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 
 	local function tryGeometryFallback(instance, propertyName, optional)
-		local ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
+		local ok, result
+		if isCriticalUnionProperty(instance, propertyName) then
+			ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty_fallback, os.clock())
+		else
+			ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
+		end
 		if ok and (result ~= nil or optional) then
 			return result
 		end
@@ -2764,7 +2856,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		if special then
 			if gethiddenproperty then
-				local ok, result = pcall(gethiddenproperty, instance, propertyName)
+				local ok, result
+				if isCriticalUnionProperty(instance, propertyName) then
+					ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty, os.clock())
+				else
+					ok, result = pcall(gethiddenproperty, instance, propertyName)
+				end
 
 				if ok then
 					raw = result
@@ -2793,7 +2890,11 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				if ok then
 					raw = result
 				elseif gethiddenproperty then -- ! Be careful with this 'and gethiddenproperty' logic
-					ok, result = pcall(gethiddenproperty, instance, propertyName)
+					if isCriticalUnionProperty(instance, propertyName) then
+						ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty, os.clock())
+					else
+						ok, result = pcall(gethiddenproperty, instance, propertyName)
+					end
 
 					if ok then
 						raw = result
@@ -3156,7 +3257,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						local raw = ReadProperty(instance, Property, PropertyName, Special, Category, Optional)
 
 						if raw == __BREAK then -- ! Assuming __BREAK is always returned when there's a failure to read a property
-							local ok, result = pcall(gethiddenproperty_fallback, instance, PropertyName) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
+							local ok, result
+							if isCriticalUnionProperty(instance, PropertyName) then
+								ok, result =
+									readCriticalUnionProperty(instance, PropertyName, gethiddenproperty_fallback, os.clock())
+							else
+								ok, result = pcall(gethiddenproperty_fallback, instance, PropertyName) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
+							end
 
 							if result == nil and not Optional then
 								ok = nil
@@ -3392,12 +3499,28 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 								return
 							end
 
-							local ok, raw = pcall(index, instance, sourcePropertyName or propertyName)
+							local readPropertyName = sourcePropertyName or propertyName
+							local ok, raw
+							if isCriticalUnionProperty(instance, readPropertyName) then
+								ok, raw = readCriticalUnionProperty(instance, readPropertyName, index, os.clock())
+							else
+								ok, raw = pcall(index, instance, readPropertyName)
+							end
 							if (not ok or raw == nil) and gethiddenproperty then
-								ok, raw = pcall(gethiddenproperty, instance, sourcePropertyName or propertyName)
+								if isCriticalUnionProperty(instance, readPropertyName) then
+									ok, raw =
+										readCriticalUnionProperty(instance, readPropertyName, gethiddenproperty, os.clock())
+								else
+									ok, raw = pcall(gethiddenproperty, instance, readPropertyName)
+								end
 							end
 							if (not ok or raw == nil) then
-								ok, raw = pcall(gethiddenproperty_fallback, instance, sourcePropertyName or propertyName)
+								if isCriticalUnionProperty(instance, readPropertyName) then
+									ok, raw =
+										readCriticalUnionProperty(instance, readPropertyName, gethiddenproperty_fallback, os.clock())
+								else
+									ok, raw = pcall(gethiddenproperty_fallback, instance, readPropertyName)
+								end
 							end
 							if not ok or raw == nil or raw == "" then
 								return
@@ -3729,7 +3852,11 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			end
 		end
 		table.clear(SharedStrings)
-		if next(TriangleMeshReadFailures) then
+		local unreadable_union_count = 0
+		for _ in UnreadableUnionInstances do
+			unreadable_union_count += 1
+		end
+		if next(TriangleMeshReadFailures) or unreadable_union_count ~= 0 then
 			local failure_summary = {}
 			for className, failures in TriangleMeshReadFailures do
 				for propertyName, count in failures do
@@ -3737,19 +3864,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				end
 			end
 			table.sort(failure_summary)
-			local unreadable_union_count = 0
-			for _ in UnreadableUnionInstances do
-				unreadable_union_count += 1
+			if #failure_summary ~= 0 then
+				warn(
+					"[saveinstance] Some TriangleMeshPart geometry properties could not be read by this executor: "
+						.. table.concat(failure_summary, ", ")
+				)
 			end
-			warn(
-				"[saveinstance] Some TriangleMeshPart geometry properties could not be read by this executor: "
-					.. table.concat(failure_summary, ", ")
-			)
 			if unreadable_union_count ~= 0 then
 				warn(
 					"[saveinstance] "
 						.. unreadable_union_count
-						.. " UnionOperation/PartOperation instances are missing readable CSG geometry. They cannot be preserved exactly with this executor."
+						.. " UnionOperation/PartOperation instances hit the geometry read timeout or are missing readable CSG geometry. They were saved as visible Parts when TreatUnreadableUnionsAsParts is enabled."
 				)
 			end
 		end
