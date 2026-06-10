@@ -1844,6 +1844,13 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local output_writer
 	local last_save_cache_render = 0
 	local header = '<roblox version="4">'
+	local SaveStats = {
+		defaultReadFailures = 0,
+		propertyReadFailures = 0,
+		sharedStringsSkipped = 0,
+		streamMode = "memory",
+		unionFallbacks = 0,
+	}
 
 	local StatusText
 
@@ -2100,8 +2107,16 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		__DEBUG_MODE = warn
 	end
 
+	local function normalizeNumber(value, defaultValue, minValue)
+		value = tonumber(value)
+		if value == nil or value ~= value or minValue and value < minValue then
+			return defaultValue
+		end
+		return value
+	end
+
 	local FilePath = OPTIONS.FilePath
-	local SaveCacheInterval = OPTIONS.SaveCacheInterval
+	local SaveCacheInterval = normalizeNumber(OPTIONS.SaveCacheInterval, 0x1600 * 10, 1)
 	local AutoOptimize = OPTIONS.AutoOptimize ~= false
 	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "auto"))
 	local ForceLowMemory = CustomOptions_valid.LowMemory and OPTIONS.LowMemory == true
@@ -2112,15 +2127,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	if PerformanceMode == "lowmemory" then
 		ForceLowMemory = true
 	end
-	local StreamWriteSize = OPTIONS.StreamWriteSize
-	local AutoStreamThreshold = OPTIONS.AutoStreamThreshold
-	local StatusUpdateInterval = OPTIONS.StatusUpdateInterval
-	if type(AutoStreamThreshold) ~= "number" or AutoStreamThreshold < 1024 then
-		AutoStreamThreshold = 96 * 1024 * 1024
-	end
-	if type(StatusUpdateInterval) ~= "number" or StatusUpdateInterval < 0 then
-		StatusUpdateInterval = 0.25
-	end
+	local StreamWriteSize = tonumber(OPTIONS.StreamWriteSize)
+	local AutoStreamThreshold = normalizeNumber(OPTIONS.AutoStreamThreshold, 96 * 1024 * 1024, 1024)
+	local StatusUpdateInterval = normalizeNumber(OPTIONS.StatusUpdateInterval, 0.25, 0)
 	local ToSaveInstance = OPTIONS.Object
 	local IsModel = OPTIONS.IsModel
 
@@ -2141,8 +2150,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local SaveNotCreatable = OPTIONS.SaveNotCreatable
 	local TreatUnionsAsParts = OPTIONS.TreatUnionsAsParts
 	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
-	local UnionGeometryReadTimeout = tonumber(OPTIONS.UnionGeometryReadTimeout) or 0.25
-	local UnionGeometryReadTotalTimeout = tonumber(OPTIONS.UnionGeometryReadTotalTimeout) or 4
+	local UnionGeometryReadTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTimeout, 0.25)
+	local UnionGeometryReadTotalTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTotalTimeout, 4)
 
 	local DecompileJobless = OPTIONS.DecompileJobless
 	if DecompileJobless then
@@ -2456,6 +2465,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			end
 
 			writer.streaming = true
+			SaveStats.streamMode = writer.mode
 			return true
 		end
 
@@ -2681,11 +2691,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return CriticalTriangleMeshProperties[propertyName] and instance:IsA("TriangleMeshPart")
 	end
 
+	local readCriticalUnionProperty
 	local IPM_ENABLED = math.huge <= CLIENT_VERSION and IgnoreDefaultProperties -- ! NOT ENABLED YET
 	local IPM_DISABLED = not IPM_ENABLED
 	local __BREAK = "__BREAK" .. service.HttpService:GenerateGUID(false)
+	local DEFAULT_INSTANCE_FAILED = {}
 	local TriangleMeshReadFailures = {}
 	local UnreadableUnionInstances = {}
+	local PropertyReadFailureCache = {}
+	local DefaultPropertyReadFailures = {}
 	local UnionGeometryReadCache = setmetatable({}, { __mode = "k" })
 	local UnionGeometryReadStarted = os.clock()
 	local UnionGeometryReadDisabled = false
@@ -2701,6 +2715,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			classFailures[propertyName] = (classFailures[propertyName] or 0) + 1
 
 			if CriticalUnionProperties[propertyName] and instance:IsA("PartOperation") then
+				if not UnreadableUnionInstances[instance] then
+					SaveStats.unionFallbacks += 1
+				end
 				UnreadableUnionInstances[instance] = true
 			end
 		end
@@ -2710,8 +2727,70 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return CriticalUnionProperties[propertyName] and instance:IsA("PartOperation")
 	end
 
+	local function isCriticalRead(instance, propertyName, optional)
+		return optional
+			or propertyName == "Source"
+			or isCriticalTriangleMeshProperty(instance, propertyName)
+			or isCriticalUnionProperty(instance, propertyName)
+	end
+
+	local function getCachedFailure(cacheRoot, className, propertyName)
+		local classCache = cacheRoot[className]
+		return classCache and classCache[propertyName]
+	end
+
+	local function setCachedFailure(cacheRoot, className, propertyName)
+		local classCache = cacheRoot[className]
+		if not classCache then
+			classCache = {}
+			cacheRoot[className] = classCache
+		end
+		if not classCache[propertyName] then
+			classCache[propertyName] = true
+			return true
+		end
+	end
+
+	local function safeReadProperty(instance, propertyName, reader, optional, unionStarted)
+		if isCriticalUnionProperty(instance, propertyName) then
+			return readCriticalUnionProperty(instance, propertyName, reader, unionStarted or os.clock())
+		end
+
+		local className = instance.ClassName
+		local canCacheFailure = not isCriticalRead(instance, propertyName, optional)
+		local cacheKey = tostring(reader) .. "\0" .. propertyName
+		if canCacheFailure and getCachedFailure(PropertyReadFailureCache, className, cacheKey) then
+			return false
+		end
+
+		local ok, result = pcall(reader, instance, propertyName)
+		if not ok and canCacheFailure and setCachedFailure(PropertyReadFailureCache, className, cacheKey) then
+			SaveStats.propertyReadFailures += 1
+		end
+		return ok, result
+	end
+
+	local function safeReadDefaultProperty(defaultInstance, className, propertyName)
+		if getCachedFailure(DefaultPropertyReadFailures, className, propertyName) then
+			return false
+		end
+
+		local ok, result = pcall(index, defaultInstance, propertyName)
+		if not ok then
+			if setCachedFailure(DefaultPropertyReadFailures, className, propertyName) then
+				SaveStats.defaultReadFailures += 1
+			end
+			return false
+		end
+
+		return true, result
+	end
+
 	local function markUnreadableUnion(instance, propertyName)
 		if isCriticalUnionProperty(instance, propertyName or "MeshData2") then
+			if not UnreadableUnionInstances[instance] then
+				SaveStats.unionFallbacks += 1
+			end
 			UnreadableUnionInstances[instance] = true
 			UnionGeometryReadCache[instance] = false
 		end
@@ -2735,7 +2814,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return false
 	end
 
-	local function readCriticalUnionProperty(instance, propertyName, reader, unionStarted)
+	readCriticalUnionProperty = function(instance, propertyName, reader, unionStarted)
 		if unionGeometryReadTimedOut(instance, propertyName, unionStarted) then
 			return false
 		end
@@ -2811,12 +2890,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 
 	local function tryGeometryFallback(instance, propertyName, optional)
-		local ok, result
-		if isCriticalUnionProperty(instance, propertyName) then
-			ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty_fallback, os.clock())
-		else
-			ok, result = pcall(gethiddenproperty_fallback, instance, propertyName)
-		end
+		local ok, result = safeReadProperty(instance, propertyName, gethiddenproperty_fallback, optional)
 		if ok and (result ~= nil or optional) then
 			return result
 		end
@@ -2856,12 +2930,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		if special then
 			if gethiddenproperty then
-				local ok, result
-				if isCriticalUnionProperty(instance, propertyName) then
-					ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty, os.clock())
-				else
-					ok, result = pcall(gethiddenproperty, instance, propertyName)
-				end
+				local ok, result = safeReadProperty(instance, propertyName, gethiddenproperty, optional)
 
 				if ok then
 					raw = result
@@ -2885,16 +2954,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			if CanRead then
 				raw = instance[propertyName]
 			else -- Assuming CanRead == nil (untested)
-				local ok, result = pcall(index, instance, propertyName)
+				local ok, result = safeReadProperty(instance, propertyName, index, optional)
 
 				if ok then
 					raw = result
 				elseif gethiddenproperty then -- ! Be careful with this 'and gethiddenproperty' logic
-					if isCriticalUnionProperty(instance, propertyName) then
-						ok, result = readCriticalUnionProperty(instance, propertyName, gethiddenproperty, os.clock())
-					else
-						ok, result = pcall(gethiddenproperty, instance, propertyName)
-					end
+					ok, result = safeReadProperty(instance, propertyName, gethiddenproperty, optional)
 
 					if ok then
 						raw = result
@@ -3064,19 +3129,18 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			end
 		end
 
-		if StatusText then
-			StatusText.Text = "Saving.. Size: "
-				.. get_size_format()
-				.. (
-					output_writer and output_writer.streaming and (
-						output_writer.mode == "adaptive" and " (adaptive stream)" or " (low memory)"
-					) or ""
-				)
-		end
 		local now = os.clock()
-		local status_interval = type(StatusUpdateInterval) == "number" and StatusUpdateInterval or 0.25
-		if final or status_interval <= now - last_save_cache_render then
+		if final or StatusUpdateInterval <= now - last_save_cache_render then
 			last_save_cache_render = now
+			if StatusText then
+				StatusText.Text = "Saving.. Size: "
+					.. get_size_format()
+					.. (
+						output_writer and output_writer.streaming and (
+							output_writer.mode == "adaptive" and " (adaptive stream)" or " (low memory)"
+						) or ""
+					)
+			end
 			wait_for_render()
 		end
 	end
@@ -3120,6 +3184,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			local ClassName = instance.ClassName
 
 			local InstanceName = instance.Name
+			local isBaseWrap = instance:IsA("BaseWrap")
+			local isLuaSource = isLuaSourceContainer(instance)
+			local isMeshPart = instance:IsA("MeshPart")
+			local isPartOperation = instance:IsA("PartOperation")
 
 			do
 				local OnIgnoredList = IgnoreList[ClassName]
@@ -3158,7 +3226,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					end
 				else -- ! Assuming nothing that is a PartOperation or inherits from it is in NotCreatableFixes
 					if
-						instance:IsA("PartOperation")
+						isPartOperation
 						and (TreatUnionsAsParts or TreatUnreadableUnionsAsParts and not canReadUnionGeometry(instance))
 					then
 						ClassName, InstanceOverride = "Part", replaceClassName(instance, InstanceName, ClassName)
@@ -3188,23 +3256,31 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				-- local Properties =
 				savebuffer[savebuffer_size] = ReturnItem(ClassTagOverride or ClassName, instance) -- TODO: Ideally this shouldn't return <Properties> as well as the line below to close it IF  IgnorePropertiesOfNotScriptsOnScriptsMode is ENABLED
 				savebuffer_size += 1
-				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSourceContainer(instance)) then
+				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSource) then
 					local default_instance, new_def_inst
-					local isMeshPart = instance:IsA("MeshPart")
 					local isTriangleMeshPart = instance:IsA("TriangleMeshPart") and ClassName ~= "Part"
 					local savedProperties = (isMeshPart or isTriangleMeshPart) and {}
 
 					if IPM_DISABLED and IgnoreDefaultProperties then
 						default_instance = default_instances[ClassName]
-						if not default_instance then
+						if default_instance == DEFAULT_INSTANCE_FAILED then
+							default_instance = nil
+						elseif not default_instance then
 							local ClassTags = ClassList[ClassName].Tags
 							if not (ClassTags and ClassTags.NotCreatable) then -- __api_dump_class_not_creatable__ also indicates this
 								-- ! NotCreatableFixes are exceptions to the check above meaning if we don't keep the NotCreatableFixes updated then Instance.new below might start erroring in the future potentially; HOWEVER IsPropertyModified solves this issue and no updates are really needed as NotCreatableFixes is up-to-date as of 664 (which is when IPM was enabled)
-								new_def_inst = Instance.new(ClassName) -- ! Assuming anything that doesn't have NotCreatable is possible to create (therefore no pcall); EXCEPTION NOTED ABOVE
+								local ok_new_def_inst
+								ok_new_def_inst, new_def_inst = pcall(Instance.new, ClassName)
+								if ok_new_def_inst then
+									default_instance = {}
 
-								default_instance = {}
-
-								default_instances[ClassName] = default_instance
+									default_instances[ClassName] = default_instance
+								else
+									default_instances[ClassName] = DEFAULT_INSTANCE_FAILED
+									if __DEBUG_MODE then
+										__DEBUG_MODE("Unable to create default Instance", ClassName)
+									end
+								end
 							elseif __DEBUG_MODE then
 								__DEBUG_MODE("Unable to create default Instance", ClassName)
 							end
@@ -3229,14 +3305,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						local ValueType = Property.ValueType
 
 						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
-							local shouldPreserveSharedString = instance:IsA("TriangleMeshPart")
-								or instance:IsA("BaseWrap")
+							local shouldPreserveSharedString = isTriangleMeshPart
+								or isBaseWrap
 								or isMeshPart
 								or (
-									instance:IsA("PartOperation")
+									isPartOperation
 									and RequiredSharedStringProperties.PartOperation[PropertyName]
 								)
 							if not shouldPreserveSharedString then
+								SaveStats.sharedStringsSkipped += 1
 								continue
 							end
 						end
@@ -3257,13 +3334,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						local raw = ReadProperty(instance, Property, PropertyName, Special, Category, Optional)
 
 						if raw == __BREAK then -- ! Assuming __BREAK is always returned when there's a failure to read a property
-							local ok, result
-							if isCriticalUnionProperty(instance, PropertyName) then
-								ok, result =
-									readCriticalUnionProperty(instance, PropertyName, gethiddenproperty_fallback, os.clock())
-							else
-								ok, result = pcall(gethiddenproperty_fallback, instance, PropertyName) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
-							end
+							local ok, result =
+								safeReadProperty(instance, PropertyName, gethiddenproperty_fallback, Optional) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
 
 							if result == nil and not Optional then
 								ok = nil
@@ -3318,10 +3390,16 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if
 							default_instance
 							and not Property.Special -- TODO: .Special is checked more than once (because it might be updated during ReadProperty)
-							and not (PropertyName == "Source" and isLuaSourceContainer(instance))
+							and not (PropertyName == "Source" and isLuaSource)
+							and not isCriticalRead(instance, PropertyName, Optional)
 						then -- ? Could be not just "Source" in the future
 							if new_def_inst then
-								default_instance[PropertyName] = index(new_def_inst, PropertyName)
+								local ok_default, default_value = safeReadDefaultProperty(new_def_inst, ClassName, PropertyName)
+								if ok_default then
+									default_instance[PropertyName] = default_value
+								else
+									continue
+								end
 							end
 							if default_instance[PropertyName] == raw then
 								continue
@@ -3500,27 +3578,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							end
 
 							local readPropertyName = sourcePropertyName or propertyName
-							local ok, raw
-							if isCriticalUnionProperty(instance, readPropertyName) then
-								ok, raw = readCriticalUnionProperty(instance, readPropertyName, index, os.clock())
-							else
-								ok, raw = pcall(index, instance, readPropertyName)
-							end
+							local ok, raw = safeReadProperty(instance, readPropertyName, index)
 							if (not ok or raw == nil) and gethiddenproperty then
-								if isCriticalUnionProperty(instance, readPropertyName) then
-									ok, raw =
-										readCriticalUnionProperty(instance, readPropertyName, gethiddenproperty, os.clock())
-								else
-									ok, raw = pcall(gethiddenproperty, instance, readPropertyName)
-								end
+								ok, raw = safeReadProperty(instance, readPropertyName, gethiddenproperty)
 							end
 							if (not ok or raw == nil) then
-								if isCriticalUnionProperty(instance, readPropertyName) then
-									ok, raw =
-										readCriticalUnionProperty(instance, readPropertyName, gethiddenproperty_fallback, os.clock())
-								else
-									ok, raw = pcall(gethiddenproperty_fallback, instance, readPropertyName)
-								end
+								ok, raw = safeReadProperty(instance, readPropertyName, gethiddenproperty_fallback)
 							end
 							if not ok or raw == nil or raw == "" then
 								return
@@ -3877,6 +3940,16 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						.. " UnionOperation/PartOperation instances hit the geometry read timeout or are missing readable CSG geometry. They were saved as visible Parts when TreatUnreadableUnionsAsParts is enabled."
 				)
 			end
+		end
+		if __DEBUG_MODE then
+			__DEBUG_MODE(
+				"SaveStats",
+				"streamMode=" .. tostring(SaveStats.streamMode),
+				"propertyReadFailures=" .. tostring(SaveStats.propertyReadFailures),
+				"defaultReadFailures=" .. tostring(SaveStats.defaultReadFailures),
+				"sharedStringsSkipped=" .. tostring(SaveStats.sharedStringsSkipped),
+				"unionFallbacks=" .. tostring(SaveStats.unionFallbacks)
+			)
 		end
 	end
 
