@@ -2186,9 +2186,10 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field StreamWriteSize number -- Maximum appendfile segment size for streaming. ___Default:___ automatic
 --- @field AutoStreamThreshold number -- Size where automatic mode switches from memory buffering to streaming. ___Default:___ 96 * 1024 * 1024
 --- @field StatusUpdateInterval number -- Minimum seconds between saving status/render updates. ___Default:___ 0.25
---- @field BoostFPS boolean -- Disables 3D rendering while saving and restores it afterwards. SafeMode enables this by default. ___Default:___ false
+--- @field BoostFPS boolean -- Disables 3D rendering while saving and restores it afterwards. SafeMode and PerformanceMode="speed" enable this by default. ___Default:___ false
 --- @field ApiDumpCacheMode string -- API dump loading mode: smart, offline, refresh. ___Default:___ "smart"
 --- @field FidelityMode string -- Save fidelity profile: max, balanced, fast. ___Default:___ "max"
+--- @field SpeedMode string -- Speed profile used when PerformanceMode is "speed": safe keeps critical fidelity, aggressive skips more non-critical fallback work. ___Default:___ "safe"
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
 --- @field IsModel boolean -- If Object is specified then sets to true automatically, unless you set it to false. ___Default:___ false
@@ -2322,6 +2323,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		BoostFPS = false,
 		ApiDumpCacheMode = "smart",
 		FidelityMode = "max",
+		SpeedMode = "safe",
 		Anonymous = false,
 		ReadMe = false,
 		ScriptSourceHeader = false,
@@ -2568,17 +2570,31 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	end
 	local AutoOptimize = OPTIONS.AutoOptimize ~= false
 	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "auto"))
+	local SpeedMode = string.lower(tostring(OPTIONS.SpeedMode or "safe"))
+	if SpeedMode ~= "safe" and SpeedMode ~= "aggressive" then
+		SpeedMode = "safe"
+	end
 	local ForceLowMemory = CustomOptions_valid.LowMemory and OPTIONS.LowMemory == true
 	local ForceSpeed = CustomOptions_valid.PerformanceMode and PerformanceMode == "speed"
 	if PerformanceMode ~= "auto" and PerformanceMode ~= "balanced" and PerformanceMode ~= "speed" and PerformanceMode ~= "lowmemory" then
 		PerformanceMode = "auto"
 	end
+	local SpeedProfile = PerformanceMode == "speed"
+	local AggressiveSpeed = SpeedProfile and SpeedMode == "aggressive"
 	if PerformanceMode == "lowmemory" then
 		ForceLowMemory = true
 	end
 	local StreamWriteSize = tonumber(OPTIONS.StreamWriteSize)
 	local AutoStreamThreshold = normalizeNumber(OPTIONS.AutoStreamThreshold, 96 * 1024 * 1024, 1024)
 	local StatusUpdateInterval = normalizeNumber(OPTIONS.StatusUpdateInterval, 0.25, 0)
+	if SpeedProfile then
+		if CustomOptions_valid.SaveCacheInterval == nil then
+			SaveCacheInterval = 0x1600 * 30
+		end
+		if CustomOptions_valid.StatusUpdateInterval == nil then
+			StatusUpdateInterval = 1
+		end
+	end
 	local ToSaveInstance = OPTIONS.Object
 	local IsModel = OPTIONS.IsModel
 
@@ -2601,7 +2617,14 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
 	local UnionGeometryReadTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTimeout, 0.25)
 	local UnionGeometryReadTotalTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTotalTimeout, 4)
-	if FidelityMode == "max" then
+	if SpeedProfile and CustomOptions_valid.FidelityMode == nil then
+		if CustomOptions_valid.UnionGeometryReadTimeout == nil then
+			UnionGeometryReadTimeout = 0.1
+		end
+		if CustomOptions_valid.UnionGeometryReadTotalTimeout == nil then
+			UnionGeometryReadTotalTimeout = 1.5
+		end
+	elseif FidelityMode == "max" then
 		if CustomOptions_valid.UnionGeometryReadTimeout == nil then
 			UnionGeometryReadTimeout = 0.75
 		end
@@ -2868,7 +2891,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 				while true do
 					StatusText.Text = text .. getLoadingText()
-					task.wait(0.25)
+					task.wait(SpeedProfile and 0.75 or 0.25)
 				end
 			end)
 			if waitForRender then
@@ -2896,14 +2919,14 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			and not OPTIONS.Callback
 			and not OPTIONS.Anonymous
 
-		if not can_stream or not AutoOptimize or ForceSpeed then
+		if not can_stream or not AutoOptimize then
 			return { mode = "memory" }
 		end
 
 		local write_size = type(StreamWriteSize) == "number" and StreamWriteSize
-			or (ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024)
+			or (ForceSpeed and 16 * 1024 * 1024 or ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024)
 		if write_size < 1024 then
-			write_size = ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024
+			write_size = ForceSpeed and 16 * 1024 * 1024 or ForceLowMemory and 4 * 1024 * 1024 or 8 * 1024 * 1024
 		end
 
 		local pending, pending_size, pending_len = table.create(8), 1, 0
@@ -3180,6 +3203,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local UnreadableUnionInstances = {}
 	local PropertyReadFailureCache = {}
 	local DefaultPropertyReadFailures = {}
+	local PropertyFallbackFailureCache = {}
 	local UnionGeometryReadCache = setmetatable({}, { __mode = "k" })
 	local UnionGeometryReadStarted = os.clock()
 	local UnionGeometryReadDisabled = false
@@ -3231,6 +3255,14 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 	end
 
+	local PropertyReaderCacheKeys = {
+		[index] = "index",
+		[gethiddenproperty_fallback] = "fallback",
+	}
+	if gethiddenproperty then
+		PropertyReaderCacheKeys[gethiddenproperty] = "hidden"
+	end
+
 	local function safeReadProperty(instance, propertyName, reader, optional, unionStarted)
 		if isCriticalUnionProperty(instance, propertyName) then
 			return readCriticalUnionProperty(instance, propertyName, reader, unionStarted or os.clock())
@@ -3238,7 +3270,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 		local className = instance.ClassName
 		local canCacheFailure = not isCriticalRead(instance, propertyName, optional)
-		local cacheKey = tostring(reader) .. "\0" .. propertyName
+		local readerCacheKey = PropertyReaderCacheKeys[reader]
+		if not readerCacheKey then
+			readerCacheKey = tostring(reader)
+			PropertyReaderCacheKeys[reader] = readerCacheKey
+		end
+		local cacheKey = readerCacheKey .. "\0" .. propertyName
 		if canCacheFailure and getCachedFailure(PropertyReadFailureCache, className, cacheKey) then
 			return false
 		end
@@ -3388,7 +3425,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		return false
 	end
 
-	local function ReadProperty(instance, property, propertyName, special, category, optional)
+	local function ReadProperty(instance, property, propertyName, special, category, optional, propertyNeedsCriticalRead)
 		local raw = __BREAK
 
 		local InstanceOverride = InstancesOverrides[instance]
@@ -3438,7 +3475,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 				if ok then
 					raw = result
-				elseif gethiddenproperty then -- ! Be careful with this 'and gethiddenproperty' logic
+				elseif gethiddenproperty and (not AggressiveSpeed or propertyNeedsCriticalRead) then -- ! Be careful with this 'and gethiddenproperty' logic
 					ok, result = safeReadProperty(instance, propertyName, gethiddenproperty, optional)
 
 					if ok then
@@ -3526,6 +3563,40 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		end
 		inherited_properties[className] = prop_list
 		return prop_list
+	end
+
+	local PropertyPlanCache = {}
+	local function GetPropertyPlan(className)
+		local plan = PropertyPlanCache[className]
+		if plan then
+			return plan
+		end
+
+		local properties = inherited_properties[className]
+		if not properties then
+			properties = GetInheritedProps(className)
+			inherited_properties[className] = properties
+		end
+
+		local hasSharedString, hasSource, hasContent, hasCriticalTriangleMesh, hasCriticalUnion = false, false, false, false, false
+		for _, property in properties do
+			hasSharedString = hasSharedString or property.IsSharedString
+			hasSource = hasSource or property.IsSource
+			hasContent = hasContent or property.IsEmptyContentSkippable
+			hasCriticalTriangleMesh = hasCriticalTriangleMesh or property.IsCriticalTriangleMesh
+			hasCriticalUnion = hasCriticalUnion or property.IsCriticalUnion
+		end
+
+		plan = {
+			Properties = properties,
+			HasSharedString = hasSharedString,
+			HasSource = hasSource,
+			HasContent = hasContent,
+			HasCriticalTriangleMesh = hasCriticalTriangleMesh,
+			HasCriticalUnion = hasCriticalUnion,
+		}
+		PropertyPlanCache[className] = plan
+		return plan
 	end
 
 	local TerrainGridCache = setmetatable({}, { __mode = "k" })
@@ -3621,7 +3692,9 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						) or ""
 					)
 			end
-			wait_for_render()
+			if final or not SpeedProfile then
+				wait_for_render()
+			end
 		end
 	end
 
@@ -3768,15 +3841,14 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							end
 						end
 					end
-					local proplist
+					local propertyPlan
 					do
 						local class = ClassNameOverride or ClassName
-						proplist = inherited_properties[class]
-						if not proplist then
-							proplist = GetInheritedProps(class)
-							inherited_properties[class] = proplist
-						end
+						propertyPlan = GetPropertyPlan(class)
 					end
+					local proplist = propertyPlan.Properties
+					local checkSharedStrings = IgnoreSharedStrings and propertyPlan.HasSharedString
+					local checkEmptyContent = propertyPlan.HasContent
 					for _, Property in proplist do
 						local PropertyName = Property.Name
 
@@ -3786,7 +3858,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 						local ValueType = Property.ValueType
 
-						if IgnoreSharedStrings and Property.IsSharedString then -- ? More info in Options
+						if checkSharedStrings and Property.IsSharedString then -- ? More info in Options
 							local shouldPreserveSharedString = isTriangleMeshPart
 								or isBaseWrap
 								or isMeshPart
@@ -3817,11 +3889,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							or (Property.IsCriticalTriangleMesh and isTriangleMeshPart)
 							or (Property.IsCriticalUnion and isPartOperation)
 
-						local raw = ReadProperty(instance, Property, PropertyName, Special, Category, Optional)
+						local raw =
+							ReadProperty(instance, Property, PropertyName, Special, Category, Optional, propertyNeedsCriticalRead)
 
 						if raw == __BREAK then -- ! Assuming __BREAK is always returned when there's a failure to read a property
-							local ok, result =
-								safeReadProperty(instance, PropertyName, gethiddenproperty_fallback, Optional) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
+							local ok, result
+							if not AggressiveSpeed or propertyNeedsCriticalRead then
+								ok, result =
+									safeReadProperty(instance, PropertyName, gethiddenproperty_fallback, Optional) -- * This helps in reading: Vector3int16, OptionalCoordinateFrame DataTypes. It also acts as an almost entire fallback for gethiddenproperty in case it is missing
+							end
 
 							if result == nil and not Optional then
 								ok = nil
@@ -3833,11 +3909,20 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 								local Fallback = Property.Fallback
 
 								if Fallback then
-									ok, result = pcall(Fallback, instance)
+									local fallbackCacheKey = ClassName .. "\0" .. PropertyName
+									local canCacheFallbackFailure = not propertyNeedsCriticalRead
+									ok = not canCacheFallbackFailure
+										or not getCachedFailure(PropertyFallbackFailureCache, ClassName, fallbackCacheKey)
+									if ok then
+										ok, result = pcall(Fallback, instance)
+									end
 
 									if ok then
 										raw = result
 									else
+										if canCacheFallbackFailure then
+											setCachedFailure(PropertyFallbackFailureCache, ClassName, fallbackCacheKey)
+										end
 										if __DEBUG_MODE then
 											-- TODO Maybe remove the fix during runtime if it fails to avoid re-trying
 											__DEBUG_MODE("Fix Failed", PropertyName)
@@ -3863,7 +3948,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							continue
 						end
 
-						if Property.IsEmptyContentSkippable and isEmptyContentValue(raw) then
+						if checkEmptyContent and Property.IsEmptyContentSkippable and isEmptyContentValue(raw) then
 							continue
 						end
 
@@ -4594,7 +4679,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	do
 		local SafeMode = OPTIONS.SafeMode
-		if SafeMode and CustomOptions_valid.BoostFPS == nil then
+		if (SafeMode or SpeedProfile) and CustomOptions_valid.BoostFPS == nil then
 			OPTIONS.BoostFPS = true
 		end
 
