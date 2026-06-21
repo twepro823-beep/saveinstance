@@ -1501,6 +1501,27 @@ do
 				return AttributesSerialize(conditions)
 			end,
 		},
+		AudioDeviceInput = {
+			AccessList = function(instance)
+				local userid_accesslist = instance:GetUserIdAccessList()
+				local uid_n = #userid_accesslist
+
+				if uid_n == 0 then
+					return ""
+				end
+
+				local b = buffer.create(uid_n * 8)
+				local __writei64_le = Binary_Descriptors.__writei64_le
+				local offset = 0
+
+				for _, user_id in userid_accesslist do
+					__writei64_le(b, offset, user_id)
+					offset += 8
+				end
+
+				return buffer.tostring(b)
+			end,
+		},
 
 		-- DebuggerBreakpoint = {line="Line"}, -- ? This shouldn't appear in live games (try to prove this wrong)
 		BallSocketConstraint = { MaxFrictionTorqueXml = "MaxFrictionTorque" },
@@ -1569,13 +1590,21 @@ do
 		},
 		MeshPart = { InitialSize = "MeshSize", MeshID = "MeshId" },
 		PartOperation = { InitialSize = "MeshSize" },
-		Part = { shape = "Shape" },
+		Part = { shape = "Shape", shap = "Shape" },
 		TrussPart = { style = "Style" },
 		FormFactorPart = {
 			formFactorRaw = "FormFactor",
 		},
 		Fire = { heat_xml = "Heat", size_xml = "Size" },
-		Humanoid = { Health_XML = "Health" },
+		Humanoid = {
+			Health_XML = "Health",
+			InternalBodyScale = function(instance)
+				return instance:GetAccessoryHandleScale(instance.Parent.HumanoidRootPart, Enum.BodyPartR15.RootPart)
+			end,
+			InternalHeadScale = function(instance)
+				return instance:GetAccessoryHandleScale(instance.Parent.Head, Enum.BodyPartR15.Head).X
+			end,
+		},
 		HumanoidDescription = {
 			EmotesDataInternal = function(instance)
 				local emotes_data = ""
@@ -1598,39 +1627,59 @@ do
 			end,
 		},
 		MaterialService = { Use2022MaterialsXml = "Use2022Materials" },
+		VideoPlayer = {
+			PlayingReplicating = "IsPlaying",
+		},
 
 		Model = {
+			ModelMeshCFrame = function(instance)
+				return instance:GetModelCFrame()
+			end,
+			ModelMeshSize = function(instance)
+				return instance:GetExtentsSize()
+			end,
+			Scale = function(instance)
+				return instance:GetScale()
+			end,
 			ScaleFactor = function(instance)
 				return instance:GetScale()
 			end,
 			WorldPivotData = "WorldPivot", -- TODO This doesn't accurately represent whether optional type property is present or not (it's never nil), gethiddenproperty or gethiddenproperty_fallback is preferred
 		},
-		PackageLink = { PackageIdSerialize = "PackageId", VersionIdSerialize = "VersionNumber" },
+		PackageLink = {
+			PackageContentSerialize = "PackageContent",
+			PackageIdSerialize = "PackageId",
+			VersionIdSerialize = "VersionNumber",
+		},
 		Players = { MaxPlayersInternal = "MaxPlayers", PreferredPlayersInternal = "PreferredPlayers" }, -- ? Only needed for execs that lack LocalUserSecurity (Level 2, 5, 9), even so, it's a pretty useless information as it can be viewed elsewhere
 
-		StarterPlayer = { AvatarJointUpgrade_Serialized = "AvatarJointUpgrade" },
+		StarterPlayer = {
+			AvatarJointUpgrade_Serialized = "AvatarJointUpgrade",
+			AvatarJointUpgrade_SerializedRollout = "AvatarJointUpgrade",
+		},
 		Smoke = { size_xml = "Size", opacity_xml = "Opacity", riseVelocity_xml = "RiseVelocity" },
 		Sound = {
+			xmlRead_MinDistance_3 = "RollOffMinDistance", -- * Also MinDistance
 			xmlRead_MaxDistance_3 = "RollOffMaxDistance", -- * Also MaxDistance
 		},
-		-- ViewportFrame = { -- * Pointless because these reflect CurrentCamera's properties
-		-- 	CameraCFrame = function(instance) -- *
-		-- 		local CurrentCamera = instance.CurrentCamera
-		-- 		if CurrentCamera then
-		-- 			return CurrentCamera.CFrame
-		-- 		else
-		-- 			error("No CurrentCamera", 2)
-		-- 		end
-		-- 	end,
-		-- 	-- CameraFieldOfView =
-		-- },
+		ViewportFrame = {
+			CameraCFrame = function(instance)
+				local CurrentCamera = instance.CurrentCamera
+
+				return CurrentCamera and CurrentCamera.CFrame or CFrame.identity
+			end,
+			CameraFieldOfView = function(instance)
+				local CurrentCamera = instance.CurrentCamera
+
+				return math.rad(CurrentCamera and CurrentCamera.FieldOfView or 70)
+			end,
+		},
 		WeldConstraint = {
 			Part0Internal = "Part0",
 			Part1Internal = "Part1",
-			-- State = function(instance)
-			-- 	-- If untouched then default state is 3 (default true)
-			-- 	return instance.Enabled and 1 or 0
-			-- end,
+			State = function(instance)
+				return __BIT(instance.Enabled, instance.Active)
+			end,
 		},
 		Workspace = {
 			-- SignalBehavior2 = "SignalBehavior", -- * Both are NotScriptable so it doesn't make sense to keep
