@@ -1330,18 +1330,26 @@ do
 	})
 
 	CriticalUnionProperties = ArrayToDict({
+		"AeroMeshData",
 		"ChildData",
 		"ChildData2",
+		"ManifoldMesh_DEPRECATED",
 		"MeshData",
 		"MeshData2",
+		"PhysicalConfigData",
 		"PhysicsData",
 		"SerializedOperationGraph",
 		"AssetId",
 	})
 
 	CriticalUnionMeshProperties = ArrayToDict({
+		"AeroMeshData",
+		"ChildData2",
+		"ManifoldMesh_DEPRECATED",
 		"MeshData",
 		"MeshData2",
+		"PhysicalConfigData",
+		"SerializedOperationGraph",
 	})
 
 	local function AttributesSerialize(attrs, header_bytes)
@@ -4262,6 +4270,16 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						saveForcedProperty("CollisionFidelity", nil, "Enum")
 						saveForcedProperty("PhysicsData", nil, "BinaryString")
 						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
+						if isPartOperation then
+							saveForcedProperty("RenderFidelity", nil, "Enum")
+							saveForcedProperty("SmoothingAngle", nil, "float")
+							saveForcedProperty("ChildData2", nil, "SharedString")
+							saveForcedProperty("MeshData2", nil, "SharedString")
+							saveForcedProperty("AeroMeshData", nil, "SharedString")
+							saveForcedProperty("PhysicalConfigData", nil, "SharedString")
+							saveForcedProperty("SerializedOperationGraph", nil, "SharedString")
+							saveForcedProperty("ManifoldMesh_DEPRECATED", nil, "SharedString")
+						end
 						if isMeshPart then
 							if not saveForcedProperty("MeshContent", nil, "Content") then
 								saveForcedProperty("MeshId", nil, "ContentId")
