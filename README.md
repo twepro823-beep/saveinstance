@@ -8,6 +8,9 @@ all credits to USSI, i only did some changes
 ```lua
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")();
 local SaveinstanceOptions = {
+    PerformanceMode = "speed",
+    SpeedMode = "safe",
+    FidelityMode = "max",
     TreatUnionsAsParts = false,
     TreatUnreadableUnionsAsParts = false,
     UnionGeometryReadTimeout = 0.75,

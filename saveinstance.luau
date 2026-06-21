@@ -2266,6 +2266,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field ApiDumpCacheMode string -- API dump loading mode: smart, offline, refresh. ___Default:___ "smart"
 --- @field FidelityMode string -- Save fidelity profile: max, balanced, fast. ___Default:___ "max"
 --- @field SpeedMode string -- Speed profile used when PerformanceMode is "speed": safe keeps critical geometry fidelity, aggressive skips more non-critical fallback work and shortens union geometry timeouts. ___Default:___ "safe"
+--- @field FastDefaultCompare boolean -- In PerformanceMode="speed", skips default-instance property comparisons to avoid Instance.new work. Output may be larger, but save is faster. ___Default:___ false, true in speed mode
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
 --- @field IsModel boolean -- If Object is specified then sets to true automatically, unless you set it to false. ___Default:___ false
@@ -2400,6 +2401,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		ApiDumpCacheMode = "smart",
 		FidelityMode = "max",
 		SpeedMode = "safe",
+		FastDefaultCompare = false,
 		Anonymous = false,
 		ReadMe = false,
 		ScriptSourceHeader = false,
@@ -2665,11 +2667,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local StatusUpdateInterval = normalizeNumber(OPTIONS.StatusUpdateInterval, 0.25, 0)
 	if SpeedProfile then
 		if CustomOptions_valid.SaveCacheInterval == nil then
-			SaveCacheInterval = 0x1600 * 30
+			SaveCacheInterval = 0x1600 * 50
 		end
 		if CustomOptions_valid.StatusUpdateInterval == nil then
 			StatusUpdateInterval = 1
 		end
+	end
+	local FastDefaultCompare = OPTIONS.FastDefaultCompare == true
+	if SpeedProfile and CustomOptions_valid.FastDefaultCompare == nil then
+		FastDefaultCompare = true
 	end
 	local ToSaveInstance = OPTIONS.Object
 	local IsModel = OPTIONS.IsModel
@@ -3661,6 +3667,12 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 			hasContent = hasContent or property.IsEmptyContentSkippable
 			hasCriticalTriangleMesh = hasCriticalTriangleMesh or property.IsCriticalTriangleMesh
 			hasCriticalUnion = hasCriticalUnion or property.IsCriticalUnion
+			property.PlanValueType = property.ValueType
+			property.PlanCategory = property.Category
+			property.PlanOptional = property.Optional
+			property.PlanDescriptor = property.Descriptor
+			property.PlanNeedsCriticalBase = property.Optional or property.IsSource
+			property.PlanDefaultComparableBase = not property.Optional and not property.IsSource
 		end
 
 		plan = {
@@ -3892,7 +3904,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					local isTriangleMeshPart = ClassRuntimeInfo.IsTriangleMeshPart and ClassName ~= "Part"
 					local savedProperties = (isMeshPart or isTriangleMeshPart) and {}
 
-					if IPM_DISABLED and IgnoreDefaultProperties then
+					if IPM_DISABLED and IgnoreDefaultProperties and not FastDefaultCompare then
 						default_instance = default_instances[ClassName]
 						if default_instance == DEFAULT_INSTANCE_FAILED then
 							default_instance = nil
@@ -3932,7 +3944,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							continue
 						end
 
-						local ValueType = Property.ValueType
+						local ValueType = Property.PlanValueType
 
 						if checkSharedStrings and Property.IsSharedString then -- ? More info in Options
 							local shouldPreserveSharedString = isTriangleMeshPart
@@ -3959,9 +3971,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						-- 		continue
 						-- 	end
 						-- end
-						local Category, Optional = Property.Category, Property.Optional
-						local propertyNeedsCriticalRead = Optional
-							or Property.IsSource
+						local Category, Optional = Property.PlanCategory, Property.PlanOptional
+						local propertyNeedsCriticalRead = Property.PlanNeedsCriticalBase
 							or (Property.IsCriticalTriangleMesh and isTriangleMeshPart)
 							or (Property.IsCriticalUnion and isPartOperation)
 
@@ -4037,6 +4048,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if
 							default_instance
 							and not Property.Special -- TODO: .Special is checked more than once (because it might be updated during ReadProperty)
+							and Property.PlanDefaultComparableBase
 							and not (Property.IsSource and isLuaSource)
 							and not propertyNeedsCriticalRead
 						then -- ? Could be not just "Source" in the future
@@ -4080,7 +4092,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						elseif Category == "Enum" then -- ! We do this order (Enums before Descriptors) specifically because Font Enum might get a Font Descriptor despite having Enum Category, unlike Font DataType which that Descriptor is meant for
 							value, tag = XML_Descriptors.__ENUM(raw)
 						else
-							local Descriptor = ValueType == Property.ValueType and Property.Descriptor
+							local Descriptor = ValueType == Property.PlanValueType and Property.PlanDescriptor
 								or XML_Descriptors[ValueType]
 
 							if Descriptor then
