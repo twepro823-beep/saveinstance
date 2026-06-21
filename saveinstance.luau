@@ -1290,7 +1290,7 @@ do
 		Blacklist = {
 			LuaSourceContainer = ArrayToDict({ "ScriptGuid" }),
 			Instance = ArrayToDict({ "UniqueId", "HistoryId" }),
-			MeshPart = ArrayToDict({ "HasSkinnedMesh", "MeshContent", "TextureContent" }),
+			MeshPart = ArrayToDict({ "HasSkinnedMesh" }),
 			BaseWrap = ArrayToDict({ "CageMeshContent" }),
 			WrapLayer = ArrayToDict({ "ReferenceMeshContent" }),
 			SurfaceAppearance = ArrayToDict({
@@ -1567,7 +1567,7 @@ do
 		TriangleMeshPart = {
 			FluidFidelityInternal = "FluidFidelity",
 		},
-		MeshPart = { InitialSize = "MeshSize" },
+		MeshPart = { InitialSize = "MeshSize", MeshID = "MeshId" },
 		PartOperation = { InitialSize = "MeshSize" },
 		Part = { shape = "Shape" },
 		TrussPart = { style = "Style" },
@@ -4146,8 +4146,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 					if isTriangleMeshPart then
 						local function saveForcedProperty(propertyName, sourcePropertyName, valueType)
-							if savedProperties[propertyName] or IgnoreProperties[propertyName] then
-								return
+							if savedProperties[propertyName] then
+								return true
+							elseif IgnoreProperties[propertyName] then
+								return false
 							end
 
 							local readPropertyName = sourcePropertyName or propertyName
@@ -4158,8 +4160,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							if (not ok or raw == nil) then
 								ok, raw = safeReadProperty(instance, readPropertyName, gethiddenproperty_fallback)
 							end
-							if not ok or raw == nil or raw == "" then
-								return
+							if not ok or raw == nil or raw == "" or valueType == "Content" and isEmptyContentValue(raw) then
+								return false
 							end
 
 							local value, tag
@@ -4168,7 +4170,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							else
 								local descriptor = XML_Descriptors[valueType]
 								if not descriptor then
-									return
+									return false
 								end
 
 								value, tag = ReturnValueAndTag(raw, valueType, descriptor)
@@ -4177,15 +4179,21 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 								savebuffer[savebuffer_size] = ReturnProperty(tag, propertyName, value)
 								savebuffer_size += 1
 								savedProperties[propertyName] = true
+								return true
 							end
+							return false
 						end
 
 						saveForcedProperty("CollisionFidelity", nil, "Enum")
 						saveForcedProperty("PhysicsData", nil, "BinaryString")
 						saveForcedProperty("InitialSize", "MeshSize", "Vector3")
 						if isMeshPart then
-							saveForcedProperty("MeshId", nil, "ContentId")
-							saveForcedProperty("TextureID", nil, "ContentId")
+							if not saveForcedProperty("MeshContent", nil, "Content") then
+								saveForcedProperty("MeshId", nil, "ContentId")
+							end
+							if not saveForcedProperty("TextureContent", nil, "Content") then
+								saveForcedProperty("TextureID", nil, "ContentId")
+							end
 						end
 					end
 				end
