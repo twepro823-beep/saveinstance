@@ -1274,7 +1274,7 @@ for descriptorName, redirectName in
 do
 	XML_Descriptors[descriptorName] = XML_Descriptors[redirectName]
 end
-local ClassList
+local ClassList, FetchAPI, ApiDumpSource
 local RequiredSharedStringProperties
 local CriticalTriangleMeshProperties
 local CriticalUnionProperties
@@ -1687,10 +1687,15 @@ do
 		end
 	end
 
-	local function FetchAPI()
+	FetchAPI = function(apiDumpCacheMode)
 		-- Credits @MaximumADHD
 
 		local API_Dump
+		local ApiDumpSource
+		apiDumpCacheMode = string.lower(tostring(apiDumpCacheMode or "smart"))
+		if apiDumpCacheMode ~= "smart" and apiDumpCacheMode ~= "offline" and apiDumpCacheMode ~= "refresh" then
+			apiDumpCacheMode = "smart"
+		end
 
 		local filter
 		pcall(function()
@@ -1701,7 +1706,7 @@ do
 		-- ! exact version match is preferred; mismatched dump versions might make saveinstance try properties your client doesn't have yet
 		local APIDUMP_FETCHERS = {
 			[1] = function()
-				if not readfile then
+				if not readfile or apiDumpCacheMode == "refresh" then
 					return
 				end
 
@@ -1711,6 +1716,10 @@ do
 				end
 			end,
 			[2] = function() -- version-history.json -> exact_match -> zbeta -> LIVE -> sibling major matches
+				if apiDumpCacheMode == "offline" then
+					return
+				end
+
 				local client_version_str = tostring(CLIENT_VERSION)
 
 				local dump
@@ -1893,6 +1902,10 @@ do
 				return service.HttpService:JSONEncode(classes)
 			end,
 			[4] = function()
+				if apiDumpCacheMode == "offline" then
+					return
+				end
+
 				return service.HttpService:JSONEncode(
 					service.HttpService:JSONDecode(
 						game:HttpGet(
@@ -1908,6 +1921,10 @@ do
 			local o, r = pcall(fetcher)
 			if o and r then
 				API_Dump = r
+				ApiDumpSource = i == 1 and "cache"
+					or i == 2 and "version-history"
+					or i == 3 and "reflection"
+					or "latest"
 				if i == 2 and writefile then
 					writefile(FULL_VERSION, API_Dump)
 				end
@@ -1920,6 +1937,7 @@ do
 
 		local classList = {}
 		local tmp_classDict = {}
+		local ContentPropertiesByClass = {}
 
 		local ClassesWhitelist, ClassesBlacklist = ClassPropertyExceptions.Whitelist, ClassPropertyExceptions.Blacklist
 
@@ -1993,20 +2011,27 @@ do
 						local ValueType = Member.ValueType
 						local ValueType_Name = ValueType.Name
 
-						if ValueType_Name == "Content" or ValueType_Name == "AssetContentMap" then
+						if
+							ApiDumpSource ~= "reflection"
+							and (ValueType_Name == "Content" or ValueType_Name == "AssetContentMap")
+						then
 							if not ContentProperties then
-								ContentProperties = {}
+								ContentProperties = ContentPropertiesByClass[ClassName]
+								if not ContentProperties then
+									ContentProperties = {}
+									ContentPropertiesByClass[ClassName] = ContentProperties
 
-								if filter then
-									local o, properties = pcall(
-										service.ReflectionService.GetPropertiesOfClass,
-										service.ReflectionService,
-										ClassName,
-										filter
-									)
-									if o then
-										for _, property in properties do
-											ContentProperties[property.Name] = property.Serialized
+									if filter then
+										local o, properties = pcall(
+											service.ReflectionService.GetPropertiesOfClass,
+											service.ReflectionService,
+											ClassName,
+											filter
+										)
+										if o then
+											for _, property in properties do
+												ContentProperties[property.Name] = property.Serialized
+											end
 										end
 									end
 								end
@@ -2065,6 +2090,12 @@ do
 								Special = Special,
 
 								CanRead = nil,
+								Descriptor = XML_Descriptors[ValueType_Name],
+								IsCriticalUnion = CriticalUnionProperties[PropertyName],
+								IsCriticalTriangleMesh = CriticalTriangleMeshProperties[PropertyName],
+								IsSharedString = ValueType_Name == "SharedString",
+								IsSource = PropertyName == "Source",
+								IsEmptyContentSkippable = ValueType_Name == "Content",
 							}
 
 							if string.sub(ValueType_Name, 1, 8) == "Optional" then
@@ -2112,16 +2143,7 @@ do
 
 		-- classList.Instance.Properties.Parent = nil -- ? Not sure if this is a better option than filtering through properties to remove this
 
-		return classList
-	end
-
-	local ok, result = pcall(FetchAPI)
-	if ok then
-		ClassList = result
-	else
-		warn("Failed to load the API Dump")
-		warn(result)
-		return
+		return classList, ApiDumpSource
 	end
 end
 
@@ -2165,6 +2187,8 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field AutoStreamThreshold number -- Size where automatic mode switches from memory buffering to streaming. ___Default:___ 96 * 1024 * 1024
 --- @field StatusUpdateInterval number -- Minimum seconds between saving status/render updates. ___Default:___ 0.25
 --- @field BoostFPS boolean -- Disables 3D rendering while saving and restores it afterwards. SafeMode enables this by default. ___Default:___ false
+--- @field ApiDumpCacheMode string -- API dump loading mode: smart, offline, refresh. ___Default:___ "smart"
+--- @field FidelityMode string -- Save fidelity profile: max, balanced, fast. ___Default:___ "max"
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
 --- @field IsModel boolean -- If Object is specified then sets to true automatically, unless you set it to false. ___Default:___ false
@@ -2188,8 +2212,8 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
 --- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read safely into Parts. This avoids invisible unions on weak executors but loses the real union shape. ___Default:___ true
---- @field UnionGeometryReadTimeout number -- Maximum seconds spent probing one union's hidden geometry before falling back to a visible Part. Set to -1 to disable the per-union timeout. ___Default:___ 0.25
---- @field UnionGeometryReadTotalTimeout number -- Maximum total seconds spent probing union hidden geometry during the save before remaining unreadable unions fall back to visible Parts. Set to -1 to disable the total timeout. ___Default:___ 4
+--- @field UnionGeometryReadTimeout number -- Maximum seconds spent probing one union's hidden geometry before falling back to a visible Part. Set to -1 to disable the per-union timeout. ___Default:___ 0.75 in FidelityMode=max, 0.25 balanced, 0.1 fast
+--- @field UnionGeometryReadTotalTimeout number -- Maximum total seconds spent probing union hidden geometry during the save before remaining unreadable unions fall back to visible Parts. Set to -1 to disable the total timeout. ___Default:___ 10 in FidelityMode=max, 4 balanced, 1.5 fast
 
 --- @interface OptionsAliases
 --- @within SynSaveInstance
@@ -2242,6 +2266,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local last_save_cache_render = 0
 	local header = '<roblox version="4">'
 	local SaveStats = {
+		apiDumpSource = "",
 		defaultReadFailures = 0,
 		propertyReadFailures = 0,
 		sharedStringsSkipped = 0,
@@ -2295,6 +2320,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		ShutdownWhenDone = false,
 		AntiIdle = true,
 		BoostFPS = false,
+		ApiDumpCacheMode = "smart",
+		FidelityMode = "max",
 		Anonymous = false,
 		ReadMe = false,
 		ScriptSourceHeader = false,
@@ -2505,6 +2532,26 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		__DEBUG_MODE = warn
 	end
 
+	local ApiDumpCacheMode = string.lower(tostring(OPTIONS.ApiDumpCacheMode or "smart"))
+	if ApiDumpCacheMode ~= "smart" and ApiDumpCacheMode ~= "offline" and ApiDumpCacheMode ~= "refresh" then
+		ApiDumpCacheMode = "smart"
+	end
+
+	if not ClassList or ApiDumpCacheMode == "refresh" then
+		local ok, result, source = pcall(FetchAPI, ApiDumpCacheMode)
+		if ok then
+			ClassList = result
+			ApiDumpSource = source
+			SaveStats.apiDumpSource = source or ""
+		else
+			warn("Failed to load the API Dump")
+			warn(result)
+			GLOBAL_ENV.USSI = nil
+			return
+		end
+	end
+	SaveStats.apiDumpSource = ApiDumpSource or SaveStats.apiDumpSource
+
 	local function normalizeNumber(value, defaultValue, minValue)
 		value = tonumber(value)
 		if value == nil or value ~= value or minValue and value < minValue then
@@ -2515,6 +2562,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local FilePath = OPTIONS.FilePath
 	local SaveCacheInterval = normalizeNumber(OPTIONS.SaveCacheInterval, 0x1600 * 10, 1)
+	local FidelityMode = string.lower(tostring(OPTIONS.FidelityMode or "max"))
+	if FidelityMode ~= "max" and FidelityMode ~= "balanced" and FidelityMode ~= "fast" then
+		FidelityMode = "max"
+	end
 	local AutoOptimize = OPTIONS.AutoOptimize ~= false
 	local PerformanceMode = string.lower(tostring(OPTIONS.PerformanceMode or "auto"))
 	local ForceLowMemory = CustomOptions_valid.LowMemory and OPTIONS.LowMemory == true
@@ -2550,6 +2601,21 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
 	local UnionGeometryReadTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTimeout, 0.25)
 	local UnionGeometryReadTotalTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTotalTimeout, 4)
+	if FidelityMode == "max" then
+		if CustomOptions_valid.UnionGeometryReadTimeout == nil then
+			UnionGeometryReadTimeout = 0.75
+		end
+		if CustomOptions_valid.UnionGeometryReadTotalTimeout == nil then
+			UnionGeometryReadTotalTimeout = 10
+		end
+	elseif FidelityMode == "fast" then
+		if CustomOptions_valid.UnionGeometryReadTimeout == nil then
+			UnionGeometryReadTimeout = 0.1
+		end
+		if CustomOptions_valid.UnionGeometryReadTotalTimeout == nil then
+			UnionGeometryReadTotalTimeout = 1.5
+		end
+	end
 
 	local DecompileJobless = OPTIONS.DecompileJobless
 	if DecompileJobless then
@@ -2585,6 +2651,22 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 	local function isLuaSourceContainer(instance)
 		return instance:IsA("LuaSourceContainer")
+	end
+
+	local ClassRuntimeCache = {}
+	local function getClassRuntimeInfo(instance, className)
+		local info = ClassRuntimeCache[className]
+		if not info then
+			info = {
+				IsBaseWrap = instance:IsA("BaseWrap"),
+				IsLuaSource = isLuaSourceContainer(instance),
+				IsMeshPart = instance:IsA("MeshPart"),
+				IsPartOperation = instance:IsA("PartOperation"),
+				IsTriangleMeshPart = instance:IsA("TriangleMeshPart"),
+			}
+			ClassRuntimeCache[className] = info
+		end
+		return info
 	end
 
 	do
@@ -3579,13 +3661,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				continue
 			end
 
-			local ClassName = instance.ClassName
+			local OriginalClassName = instance.ClassName
+			local ClassName = OriginalClassName
+			local ClassRuntimeInfo = getClassRuntimeInfo(instance, OriginalClassName)
 
 			local InstanceName = instance.Name
-			local isBaseWrap = instance:IsA("BaseWrap")
-			local isLuaSource = isLuaSourceContainer(instance)
-			local isMeshPart = instance:IsA("MeshPart")
-			local isPartOperation = instance:IsA("PartOperation")
+			local isBaseWrap = ClassRuntimeInfo.IsBaseWrap
+			local isLuaSource = ClassRuntimeInfo.IsLuaSource
+			local isMeshPart = ClassRuntimeInfo.IsMeshPart
+			local isPartOperation = ClassRuntimeInfo.IsPartOperation
 
 			do
 				local OnIgnoredList = IgnoreList[ClassName]
@@ -3656,7 +3740,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 				savebuffer_size += 1
 				if not (IgnorePropertiesOfNotScriptsOnScriptsMode and not isLuaSource) then
 					local default_instance, new_def_inst
-					local isTriangleMeshPart = instance:IsA("TriangleMeshPart") and ClassName ~= "Part"
+					local isTriangleMeshPart = ClassRuntimeInfo.IsTriangleMeshPart and ClassName ~= "Part"
 					local savedProperties = (isMeshPart or isTriangleMeshPart) and {}
 
 					if IPM_DISABLED and IgnoreDefaultProperties then
@@ -3702,7 +3786,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 
 						local ValueType = Property.ValueType
 
-						if IgnoreSharedStrings and ValueType == "SharedString" then -- ? More info in Options
+						if IgnoreSharedStrings and Property.IsSharedString then -- ? More info in Options
 							local shouldPreserveSharedString = isTriangleMeshPart
 								or isBaseWrap
 								or isMeshPart
@@ -3728,6 +3812,10 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						-- 	end
 						-- end
 						local Category, Optional = Property.Category, Property.Optional
+						local propertyNeedsCriticalRead = Optional
+							or Property.IsSource
+							or (Property.IsCriticalTriangleMesh and isTriangleMeshPart)
+							or (Property.IsCriticalUnion and isPartOperation)
 
 						local raw = ReadProperty(instance, Property, PropertyName, Special, Category, Optional)
 
@@ -3775,7 +3863,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 							continue
 						end
 
-						if ValueType == "Content" and isEmptyContentValue(raw) then
+						if Property.IsEmptyContentSkippable and isEmptyContentValue(raw) then
 							continue
 						end
 
@@ -3788,8 +3876,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						if
 							default_instance
 							and not Property.Special -- TODO: .Special is checked more than once (because it might be updated during ReadProperty)
-							and not (PropertyName == "Source" and isLuaSource)
-							and not isCriticalRead(instance, PropertyName, Optional)
+							and not (Property.IsSource and isLuaSource)
+							and not propertyNeedsCriticalRead
 						then -- ? Could be not just "Source" in the future
 							if new_def_inst then
 								local ok_default, default_value = safeReadDefaultProperty(new_def_inst, ClassName, PropertyName)
@@ -3831,14 +3919,15 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 						elseif Category == "Enum" then -- ! We do this order (Enums before Descriptors) specifically because Font Enum might get a Font Descriptor despite having Enum Category, unlike Font DataType which that Descriptor is meant for
 							value, tag = XML_Descriptors.__ENUM(raw)
 						else
-							local Descriptor = XML_Descriptors[ValueType]
+							local Descriptor = ValueType == Property.ValueType and Property.Descriptor
+								or XML_Descriptors[ValueType]
 
 							if Descriptor then
 								value, tag = ReturnValueAndTag(raw, ValueType, Descriptor)
 							elseif "ProtectedString" == ValueType then -- TODO: Try fitting this inside Descriptors
 								tag = ValueType
 
-								if PropertyName == "Source" then
+								if Property.IsSource then
 									if DecompileIgnoring then -- ? Should this really prevent extraction of the original source if present ?
 										if DecompileIgnoring == 1 then
 											DecompileIgnoring = nil
@@ -4177,6 +4266,8 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					.. game.PlaceVersion
 					.. " Client Version: "
 					.. FULL_VERSION
+					.. " API Dump Source: "
+					.. tostring(ApiDumpSource or "unknown")
 					.. " Platform: "
 					.. (
 						select(
@@ -4351,6 +4442,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		if __DEBUG_MODE then
 			__DEBUG_MODE(
 				"SaveStats",
+				"apiDumpSource=" .. tostring(SaveStats.apiDumpSource),
 				"streamMode=" .. tostring(SaveStats.streamMode),
 				"propertyReadFailures=" .. tostring(SaveStats.propertyReadFailures),
 				"defaultReadFailures=" .. tostring(SaveStats.defaultReadFailures),
