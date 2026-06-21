@@ -1755,6 +1755,20 @@ do
 
 		-- ! exact version match is preferred; mismatched dump versions might make saveinstance try properties your client doesn't have yet
 		local APIDUMP_FETCHERS = {
+			[0] = function()
+				if apiDumpCacheMode == "offline" then
+					return
+				end
+
+				return service.HttpService:JSONEncode(
+					service.HttpService:JSONDecode(
+						game:HttpGet(
+							"https://raw.githubusercontent.com/setup-rbxcdn/build-archive/master/data/production/builds/version-3da9d00a092c4d59/Full-API-Dump.json",
+							true
+						)
+					).Classes
+				)
+			end,
 			[1] = function()
 				if not readfile or apiDumpCacheMode == "refresh" then
 					return
@@ -1967,11 +1981,13 @@ do
 			end,
 		}
 
-		for i, fetcher in APIDUMP_FETCHERS do
+		for i = 0, 4 do
+			local fetcher = APIDUMP_FETCHERS[i]
 			local o, r = pcall(fetcher)
 			if o and r then
 				API_Dump = r
-				ApiDumpSource = i == 1 and "cache"
+				ApiDumpSource = i == 0 and "build-archive"
+					or i == 1 and "cache"
 					or i == 2 and "version-history"
 					or i == 3 and "reflection"
 					or "latest"
