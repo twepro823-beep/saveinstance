@@ -1635,6 +1635,7 @@ do
 			-- SignalBehavior2 = "SignalBehavior", -- * Both are NotScriptable so it doesn't make sense to keep
 			CollisionGroupData = function()
 				local collision_groups = game:GetService("PhysicsService"):GetRegisteredCollisionGroups()
+				local TypeID_int32 = attr_Type_IDs["int32"]
 
 				local col_groups_n = #collision_groups
 
@@ -1664,7 +1665,7 @@ do
 					buffer.writeu8(b, offset, id) -- ID
 					offset += 1
 
-					buffer.writeu8(b, offset, 4) -- ? [CONSTANT] Not sure what this is (also not sure about u8, could be i8)
+					buffer.writeu8(b, offset, TypeID_int32) -- ? Type ID for int32 (0x04)
 					offset += 1
 
 					buffer.writei32(b, offset, mask) -- Mask value as signed 32-bit integer
@@ -1680,140 +1681,292 @@ do
 			end,
 		},
 	}
+	for _, enum_item in Enum.Material:GetEnumItems() do
+		NotScriptableFixes.MaterialService[enum_item.Name .. "Name"] = function(instance)
+			return instance:GetBaseMaterialOverride(enum_item)
+		end
+	end
 
 	local function FetchAPI()
 		-- Credits @MaximumADHD
 
 		local API_Dump
-		local HTTP_TIMEOUT = 8
 
-		local function httpget_with_timeout(url, timeout)
-			local finished, ok, result = false, false
-
-			task.spawn(function()
-				ok, result = pcall(game.HttpGet, game, url, true)
-				finished = true
-			end)
-
-			local started = os.clock()
-			while not finished and os.clock() - started < timeout do
-				task.wait()
-			end
-
-			if finished and ok then
-				return result
-			end
-		end
-
-		local function get_classes_dump_from_url(url)
-			local result = httpget_with_timeout(url, HTTP_TIMEOUT)
-			if not result then
-				return
-			end
-
-			local ok, decoded = pcall(service.HttpService.JSONDecode, service.HttpService, result)
-			if not ok then
-				return
-			end
-
-			return service.HttpService:JSONEncode(decoded.Classes or decoded)
-		end
-
-		local ok, err = pcall(function()
-			local CLIENT_VERSION_str = tostring(CLIENT_VERSION)
-			local ok, result = pcall(readfile, CLIENT_VERSION_str)
-			if
-				ok
-				and result
-				and result ~= ""
-				and pcall(service.HttpService.JSONDecode, service.HttpService, result)
-			then
-				API_Dump = result
-				return
-			end
-
-			API_Dump = get_classes_dump_from_url(
-				"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/Mini-API-Dump.json"
-			)
-			if API_Dump then
-				pcall(writefile, CLIENT_VERSION_str, API_Dump)
-				return
-			end
-
-			local matching_versions, is_matched = {}
-
-			-- * https://setup.rbxcdn.com/versionQTStudio seems to be a bit behind DeployHistory.txt
-			local DeployHistoryRaw = httpget_with_timeout("https://setup.rbxcdn.com/DeployHistory.txt", HTTP_TIMEOUT)
-			if not DeployHistoryRaw then
-				return
-			end
-
-			local DeployHistory = string.split(DeployHistoryRaw, "\n")
-			for i = #DeployHistory, 1, -1 do
-				local line = DeployHistory[i]
-
-				local file_version = string.match(line, "file version: ([%d, ]+)")
-				if file_version then
-					if string.split(file_version, ", ")[2] == CLIENT_VERSION_str then
-						is_matched = true
-
-						local version_hash = string.match(line, "(version%-[^%s]+)")
-						if version_hash then
-							matching_versions[version_hash] = true
-						end
-					elseif is_matched then
-						break
-					end
-				end
-			end
-
-			for version_hash in matching_versions do
-				result = httpget_with_timeout(
-					"https://setup.rbxcdn.com/" .. version_hash .. "-Full-API-Dump.json",
-					HTTP_TIMEOUT
-				)
-				if result then
-					local o, r = pcall(service.HttpService.JSONDecode, service.HttpService, result)
-					if o then
-						API_Dump = service.HttpService:JSONEncode(r.Classes) -- minify it
-						break
-					end
-				end
-			end
-
-			if API_Dump then
-				pcall(writefile, CLIENT_VERSION_str, API_Dump)
-			end
+		local filter
+		pcall(function()
+			local Max_SecurityCapabilities = SecurityCapabilities.new(unpack(Enum.SecurityCapability:GetEnumItems()))
+			filter = { Security = Max_SecurityCapabilities, ExcludeDisplay = true, ExcludeInherited = true }
 		end)
 
-		if not ok or not API_Dump then
-			warn("[DEBUG] Failed to get " .. FULL_VERSION .. " API Dump, trying latest..")
-			warn("[DEBUG]", err)
-			API_Dump = get_classes_dump_from_url(
-				"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/Mini-API-Dump.json"
-			)
-		end
+		-- ! exact version match is preferred; mismatched dump versions might make saveinstance try properties your client doesn't have yet
+		local APIDUMP_FETCHERS = {
+			[1] = function()
+				if not readfile then
+					return
+				end
 
-		if not API_Dump then
-			error("Failed to load Roblox API dump. Your executor may be blocking HttpGet; try running again with a cached API dump file named '" .. tostring(CLIENT_VERSION) .. "'.", 2)
+				local res = readfile(FULL_VERSION)
+				if res and res ~= "" and service.HttpService:JSONDecode(res) then
+					return res
+				end
+			end,
+			[2] = function() -- version-history.json -> exact_match -> zbeta -> LIVE -> sibling major matches
+				local client_version_str = tostring(CLIENT_VERSION)
+
+				local dump
+				local matching_versions, matched, is_matched, exact_match = {}, {}
+				local function process_line(line, noinsert)
+					local file_version, patch_commit, version_hash =
+						string.match(line, '"%d+%.(%d+)%.([^"]+)": "(version%-[^"]+)')
+					if file_version == client_version_str then
+						is_matched = true
+
+						if version_hash and not matched[version_hash] then
+							matched[version_hash] = true
+							if not noinsert then
+								table.insert(matching_versions, version_hash)
+							end
+							if string.sub(FULL_VERSION, -#patch_commit) == patch_commit then
+								return version_hash
+							end
+						end
+					elseif is_matched then
+						return false
+					end
+				end
+
+				local function fetchFullApiDump(hash)
+					local ok, res = pcall(function()
+						local raw = game:HttpGet("https://setup.rbxcdn.com/" .. hash .. "-Full-API-Dump.json", true)
+						return service.HttpService:JSONEncode(service.HttpService:JSONDecode(raw).Classes)
+					end)
+					return ok and res or nil
+				end
+
+				do
+					local o, r = pcall(
+						game.HttpGet,
+						game,
+						"https://raw.githubusercontent.com/setup-rbxcdn/setup-rbxcdn.github.io/refs/heads/main/version-history/Windows/Studio64.json",
+						true
+					)
+					if o then
+						local version_history = string.split(r, "\n")
+						version_history[#version_history] = nil -- the "}"
+						for i = #version_history, 2, -1 do -- 2 avoids "{"
+							local res = process_line(version_history[i])
+							if res == false then
+								break
+							elseif res then
+								exact_match = res
+							end
+						end
+					end
+				end
+
+				do
+					local function fallback_channel(channel)
+						local ok, res = pcall(function()
+							return service.HttpService:JSONDecode(
+								game:HttpGet(
+									"https://clientsettings.rbxcdn.com/v2/client-version/WindowsStudio64"
+										.. (channel and "/channel/" .. channel or ""),
+									true
+								)
+							)
+						end)
+						if not ok then
+							return
+						end
+						if res.version and res.clientVersionUpload then
+							local line = '"' .. res.version .. '": "' .. res.clientVersionUpload
+							return process_line(line, true)
+						end
+					end
+
+					if not exact_match then
+						exact_match = fallback_channel("zbeta") or fallback_channel()
+					end
+				end
+
+				if exact_match then
+					dump = fetchFullApiDump(exact_match)
+				end
+
+				if not dump then
+					for _, version_hash in matching_versions do
+						dump = fetchFullApiDump(version_hash)
+						if dump then
+							break
+						end
+					end
+				end
+
+				return dump
+			end,
+			[3] = function()
+				if not filter then
+					return false
+				end
+
+				local classes, classes_size = {}, 1
+
+				for _, api_class in service.ReflectionService:GetClasses(filter) do
+					local members, members_size = {}, 1
+					local className = api_class.Name
+
+					local class = {
+						Name = className,
+						Members = members,
+						Superclass = api_class.Superclass or "<<<ROOT>>>",
+					}
+					local permits = api_class.Permits
+
+					local tags = {}
+					if api_class.Service then
+						table.insert(tags, "Service")
+					elseif permits and permits["GetService"] then
+						table.insert(tags, "Service")
+					elseif not permits or not permits["New"] then
+						table.insert(tags, "NotCreatable")
+					end
+
+					if #tags ~= 0 then
+						class.Tags = tags
+					end
+
+					local o, r = pcall(
+						service.ReflectionService.GetPropertiesOfClass,
+						service.ReflectionService,
+						className,
+						filter
+					)
+					if o then
+						for _, property in r do
+							local propertyName = property.Name
+
+							local valueType = property.Type
+							local valueType_Name = valueType.EngineType
+
+							local category = valueType.Category
+
+							local member_tags = {}
+
+							if not next(property.Permits) then
+								table.insert(member_tags, "NotScriptable")
+							end
+
+							if valueType_Name == "Enum" then
+								category, valueType_Name = "Enum", valueType.EnumType
+							elseif valueType_Name == "RefType" then
+								category, valueType_Name = "Class", valueType.InstanceType
+							else
+								local renames = {
+									CoordinateFrame = "CFrame",
+									Rect2D = "Rect",
+									Region3Int16 = "Region3int16",
+									Vector2Int16 = "Vector2int16",
+									Vector3Int16 = "Vector3int16",
+								}
+								valueType_Name = renames[valueType_Name] or valueType_Name
+							end
+
+							local member = {
+								Name = propertyName,
+								MemberType = "Property",
+								ValueType = { Name = valueType_Name, Category = category },
+								Serialization = { CanLoad = property.Serialized, CanSave = property.Serialized },
+							}
+
+							if #member_tags ~= 0 then
+								member.Tags = member_tags
+							end
+
+							members[members_size] = member
+							members_size += 1
+						end
+					end
+					classes[classes_size] = class
+					classes_size += 1
+				end
+
+				return service.HttpService:JSONEncode(classes)
+			end,
+			[4] = function()
+				return service.HttpService:JSONEncode(
+					service.HttpService:JSONDecode(
+						game:HttpGet(
+							"https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/Mini-API-Dump.json",
+							true
+						)
+					).Classes
+				)
+			end,
+		}
+
+		for i, fetcher in APIDUMP_FETCHERS do
+			local o, r = pcall(fetcher)
+			if o and r then
+				API_Dump = r
+				if i == 2 and writefile then
+					writefile(FULL_VERSION, API_Dump)
+				end
+				break
+			elseif r ~= false and 2 < i then
+				warn("[DEBUG] Failed to get", FULL_VERSION, "version API Dump, trying fallbacks..")
+				warn("[DEBUG] Method number:", i, "Reason:", r)
+			end
 		end
 
 		local classList = {}
+		local tmp_classDict = {}
 
 		local ClassesWhitelist, ClassesBlacklist = ClassPropertyExceptions.Whitelist, ClassPropertyExceptions.Blacklist
 
-		for _, API_Class in service.HttpService:JSONDecode(API_Dump) do
+		if not API_Dump then
+			error(
+				"Failed to load Roblox API dump. Your executor may be blocking HttpGet/ReflectionService; try running again with a cached API dump file named '"
+					.. FULL_VERSION
+					.. "'.",
+				2
+			)
+		end
+
+		local API_Dump_Decoded = service.HttpService:JSONDecode(API_Dump)
+
+		for _, API_Class in API_Dump_Decoded do
+			local ClassName = API_Class.Name
+			local props = {}
+
+			for _, Member in API_Class.Members do
+				local MemberType = Member.MemberType
+				if MemberType == "Property" or MemberType == "Function" then
+					props[Member.Name] = {
+						ValueType = MemberType == "Property" and Member.ValueType.Name,
+						MemberType = MemberType,
+					}
+				end
+			end
+
+			tmp_classDict[ClassName] = props
+		end
+
+		for _, API_Class in API_Dump_Decoded do
 			local ClassProperties, ClassProperties_size = {}, 1
 			local Class = {
 				Properties = ClassProperties,
 				Superclass = API_Class.Superclass,
+				NotCreatable = nil,
 			}
 
-			local ClassTags = API_Class.Tags
 			local ClassName = API_Class.Name
+			local ClassTags = API_Class.Tags
 
 			if ClassTags then
-				Class.Tags = ArrayToDict(ClassTags, nil, nil, "string") -- or {}
+				local Tags = ArrayToDict(ClassTags, nil, nil, "string")
+				Class.Tags = Tags
+				Class.NotCreatable = Tags.NotCreatable
+				Class.Service = Tags.Service
 			end
 
 			local NotScriptableFixClass = NotScriptableFixes[ClassName]
@@ -1822,8 +1975,8 @@ do
 
 			local ClassWhitelist, ClassBlacklist = ClassesWhitelist[ClassName], ClassesBlacklist[ClassName]
 
+			local ContentProperties
 			for _, Member in API_Class.Members do
-				-- ? print(game:GetService("ReflectionService"):GetPropertyNames("TextBox"))
 				if Member.MemberType == "Property" then
 					local Serialization = Member.Serialization
 
@@ -1836,15 +1989,38 @@ do
 							A very simple fix for many problems that saveinstance scripts encounter!
 						--]]
 						local PropertyName = Member.Name
+
+						local ValueType = Member.ValueType
+						local ValueType_Name = ValueType.Name
+
+						if ValueType_Name == "Content" or ValueType_Name == "AssetContentMap" then
+							if not ContentProperties then
+								ContentProperties = {}
+
+								if filter then
+									local o, properties = pcall(
+										service.ReflectionService.GetPropertiesOfClass,
+										service.ReflectionService,
+										ClassName,
+										filter
+									)
+									if o then
+										for _, property in properties do
+											ContentProperties[property.Name] = property.Serialized
+										end
+									end
+								end
+							end
+							if ContentProperties[PropertyName] ~= nil then
+								Serialization.CanSave = ContentProperties[PropertyName]
+							end
+						end
+
 						if
 							(Serialization.CanSave or ClassWhitelist and ClassWhitelist[PropertyName])
 							and not (ClassBlacklist and ClassBlacklist[PropertyName])
 						then
 							local MemberTags = Member.Tags
-
-							local ValueType = Member.ValueType
-							local ValueType_Name = ValueType.Name
-
 							local Special, PreferredDescriptorName
 
 							if MemberTags then
@@ -1860,6 +2036,21 @@ do
 											break
 										end
 									end
+								end
+							end
+
+							local preferredDescriptorProp
+							if PreferredDescriptorName then
+								preferredDescriptorProp = tmp_classDict[ClassName][PreferredDescriptorName]
+
+								if
+									preferredDescriptorProp == nil
+									or (
+										preferredDescriptorProp.MemberType == "Property"
+										and ValueType_Name ~= preferredDescriptorProp.ValueType
+									)
+								then
+									PreferredDescriptorName = nil
 								end
 							end
 
@@ -1881,26 +2072,32 @@ do
 								Property.Optional = string.sub(ValueType_Name, 9)
 							end
 
-							if NotScriptableFixClass then
-								local NotScriptableFix = NotScriptableFixClass[PropertyName]
-								if NotScriptableFix then
-									Property.Fallback = type(NotScriptableFix) == "function" and NotScriptableFix
-										or PreferredDescriptorName and function(instance)
-											local o, r = pcall(index, instance, PreferredDescriptorName)
-											if o then
-												return r
-											end
-											return instance[NotScriptableFix]
+							local NotScriptableFix = NotScriptableFixClass and NotScriptableFixClass[PropertyName]
+							local accessFunc = PreferredDescriptorName
+								and (
+									preferredDescriptorProp.MemberType == "Property"
+										and function(instance)
+											return instance[PreferredDescriptorName]
 										end
-										or function(instance)
-											return instance[NotScriptableFix]
+									or function(instance)
+										return instance[PreferredDescriptorName](instance)
+									end
+								)
+
+							Property.Fallback = NotScriptableFix
+									and (type(NotScriptableFix) == "function" and NotScriptableFix or accessFunc and function(
+										instance
+									)
+										local o, r = pcall(accessFunc, instance)
+										if o then
+											return r
 										end
-								end
-							elseif PreferredDescriptorName then
-								Property.Fallback = function(instance)
-									return instance[PreferredDescriptorName]
-								end
-							end
+										return instance[NotScriptableFix]
+									end or function(instance)
+										return instance[NotScriptableFix]
+									end)
+								or accessFunc
+
 							ClassProperties[ClassProperties_size] = Property
 							ClassProperties_size += 1
 
