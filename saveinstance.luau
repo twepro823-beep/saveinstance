@@ -1283,6 +1283,7 @@ local CriticalUnionMeshProperties
 do
 	local ClassPropertyExceptions = {
 		Whitelist = {
+			MeshPart = ArrayToDict({ "CollisionFidelity" }),
 			PartOperation = ArrayToDict({ "CollisionFidelity" }),
 			TriangleMeshPart = ArrayToDict({ "CollisionFidelity" }),
 		},
@@ -2212,7 +2213,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field IgnoreSharedStrings boolean -- * **RISKY: FIXES CRASHES (TEMPORARY, TESTED ON ROEXEC ONLY). FEEL FREE TO DISABLE THIS TO SEE IF IT WORKS FOR YOU**. Critical UnionOperation geometry SharedStrings are still saved. ___Default:___ true
 --- @field SharedStringOverwrite boolean -- * **RISKY:** if the process is not finished aka crashed then none of the affected values will be available. SharedStrings can also be used for ValueTypes that aren't `SharedString`, this behavior is not documented anywhere but makes sense (Could create issues though, due to _potential_ ValueType mix-up, only works on certain types which are all base64 encoded so far). Reason: Allows for potential smaller file size (can also be bigger in some cases). ___Default:___ false
 --- @field TreatUnionsAsParts boolean -- * **RISKY:** Converts all UnionOperations to Parts. This loses the real union shape and should only be used as a last-resort compatibility fallback. ___Default:___ false
---- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read safely into Parts. This avoids invisible unions on weak executors but loses the real union shape. ___Default:___ true
+--- @field TreatUnreadableUnionsAsParts boolean -- Converts only unions whose geometry data cannot be read safely into Parts. This avoids invisible unions on weak executors but loses the real union shape. ___Default:___ false
 --- @field UnionGeometryReadTimeout number -- Maximum seconds spent probing one union's hidden geometry before falling back to a visible Part. Set to -1 to disable the per-union timeout. ___Default:___ 0.75 in FidelityMode=max, 0.25 balanced, 0.1 fast
 --- @field UnionGeometryReadTotalTimeout number -- Maximum total seconds spent probing union hidden geometry during the save before remaining unreadable unions fall back to visible Parts. Set to -1 to disable the total timeout. ___Default:___ 10 in FidelityMode=max, 4 balanced, 1.5 fast
 
@@ -2368,7 +2369,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		IgnoreSharedStrings = EXECUTOR_NAME ~= "Wave" and true,
 		SharedStringOverwrite = false,
 		TreatUnionsAsParts = false,
-		TreatUnreadableUnionsAsParts = true,
+		TreatUnreadableUnionsAsParts = false,
 		UnionGeometryReadTimeout = 0.25,
 		UnionGeometryReadTotalTimeout = 4,
 		AlternativeWritefile = not ArrayToDict({ "WRD", "Xeno", "Zorara" })[EXECUTOR_NAME],

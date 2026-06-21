@@ -9,9 +9,9 @@ all credits to USSI, i only did some changes
 local synsaveinstance = loadstring(game:HttpGet("https://raw.githubusercontent.com/twepro823-beep/saveinstance/main/saveinstance.luau", true), "saveinstance")();
 local SaveinstanceOptions = {
     TreatUnionsAsParts = false,
-    TreatUnreadableUnionsAsParts = true,
-    UnionGeometryReadTimeout = 0.25,
-    UnionGeometryReadTotalTimeout = 4,
+    TreatUnreadableUnionsAsParts = false,
+    UnionGeometryReadTimeout = 0.75,
+    UnionGeometryReadTotalTimeout = 10,
     IgnoreSpecialProperties = false,
     IgnoreSharedStrings = false,
     ReadMe = true,
