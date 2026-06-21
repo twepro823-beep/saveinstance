@@ -2189,7 +2189,7 @@ local GLOBAL_ENV = getgenv and getgenv() or _G or shared
 --- @field BoostFPS boolean -- Disables 3D rendering while saving and restores it afterwards. SafeMode and PerformanceMode="speed" enable this by default. ___Default:___ false
 --- @field ApiDumpCacheMode string -- API dump loading mode: smart, offline, refresh. ___Default:___ "smart"
 --- @field FidelityMode string -- Save fidelity profile: max, balanced, fast. ___Default:___ "max"
---- @field SpeedMode string -- Speed profile used when PerformanceMode is "speed": safe keeps critical fidelity, aggressive skips more non-critical fallback work. ___Default:___ "safe"
+--- @field SpeedMode string -- Speed profile used when PerformanceMode is "speed": safe keeps critical geometry fidelity, aggressive skips more non-critical fallback work and shortens union geometry timeouts. ___Default:___ "safe"
 --- @field FilePath string -- Must only contain the name of the file, no file extension. ___Default:___ false
 --- @field Object Instance -- * If provided, saves as .rbxmx (Model file) instead. If Object is game, it will be saved as a .rbxl file. **MUST BE AN INSTANCE REFERENCE, FOR EXAMPLE - *game.Workspace***. `"optimized"` mode is **NOT** supported with this option. If IsModel is set to false then Object specified here will be saved as a place file. ___Default:___ false
 --- @field IsModel boolean -- If Object is specified then sets to true automatically, unless you set it to false. ___Default:___ false
@@ -2617,7 +2617,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	local TreatUnreadableUnionsAsParts = OPTIONS.TreatUnreadableUnionsAsParts
 	local UnionGeometryReadTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTimeout, 0.25)
 	local UnionGeometryReadTotalTimeout = normalizeNumber(OPTIONS.UnionGeometryReadTotalTimeout, 4)
-	if SpeedProfile and CustomOptions_valid.FidelityMode == nil then
+	if AggressiveSpeed and CustomOptions_valid.FidelityMode == nil then
 		if CustomOptions_valid.UnionGeometryReadTimeout == nil then
 			UnionGeometryReadTimeout = 0.1
 		end
