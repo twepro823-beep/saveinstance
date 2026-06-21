@@ -1027,6 +1027,8 @@ XML_Descriptors = {
 			return "<uri>" .. XML_Descriptors.string(raw.Uri) .. "</uri>"
 		elseif SourceType == Enum.ContentSourceType.Object then
 			return "<Ref>" .. GetRef(raw.Object) .. "</Ref>" -- TODO Not sure, run tests
+		elseif SourceType == Enum.ContentSourceType.Opaque then
+			return "<Ref>" .. GetRef(raw.Opaque) .. "</Ref>" -- TODO Not sure, run tests
 		end
 		return "<null></null>"
 	end,
@@ -1981,7 +1983,7 @@ do
 			end,
 		}
 
-		for i = 0, 4 do
+		local function tryApiDumpFetcher(i)
 			local fetcher = APIDUMP_FETCHERS[i]
 			local o, r = pcall(fetcher)
 			if o and r then
@@ -1994,10 +1996,18 @@ do
 				if i == 2 and writefile then
 					writefile(FULL_VERSION, API_Dump)
 				end
-				break
+				return true
 			elseif r ~= false and 2 < i then
 				warn("[DEBUG] Failed to get", FULL_VERSION, "version API Dump, trying fallbacks..")
 				warn("[DEBUG] Method number:", i, "Reason:", r)
+			end
+		end
+
+		if not tryApiDumpFetcher(0) then
+			for i = 1, 4 do
+				if tryApiDumpFetcher(i) then
+					break
+				end
 			end
 		end
 
